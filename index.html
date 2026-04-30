@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="FinTrack">
-<title>FinTrack</title>
+<title>FinTrack v2.0</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -16,7 +16,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
-import { getFirestore, doc, collection, setDoc, deleteDoc, onSnapshot, writeBatch, getDocs }
+import { getFirestore, doc, collection, setDoc, deleteDoc, onSnapshot, writeBatch, getDocs, query, where }
   from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
 
 // ══════════════════════════════════
@@ -39,6 +39,7 @@ const db   = getFirestore(app);
 //  STATE
 // ══════════════════════════════════
 let TXS=[], WALS=[], REMS=[], RLOG=[], CATS={income:[], expense:[]};
+let BUDGETS={}, RECURRING=[];
 let CHARTS={}, DEL_WAL_ID=null, DIP=null;
 let CUR_PAGE=1, FILTER_TYPE='';
 let CURRENT_USER=null, DB_UNSUBS=[];
@@ -127,6 +128,25 @@ async function delCatDb(id){
   if(!CURRENT_USER) return;
   await deleteDoc(uDoc('categories',id));
 }
+// ── BUDGET ──
+async function saveBudget(catName, amount){
+  if(!CURRENT_USER) return;
+  const id='bgt_'+catName.toLowerCase().replace(/\s+/g,'_');
+  await setDoc(uDoc('budgets',id), {id, catName, amount, updatedAt:Date.now()});
+}
+async function delBudgetDb(id){
+  if(!CURRENT_USER) return;
+  await deleteDoc(uDoc('budgets',id));
+}
+// ── RECURRING ──
+async function saveRecurring(r){
+  if(!CURRENT_USER) return;
+  await setDoc(uDoc('recurring',r.id), r);
+}
+async function delRecurringDb(id){
+  if(!CURRENT_USER) return;
+  await deleteDoc(uDoc('recurring',id));
+}
 
 // ══════════════════════════════════
 //  REALTIME LISTENERS (flicker-free)
@@ -161,6 +181,7 @@ function startListeners(){
   const onWal=debounce(snap=>{
     WALS=snap.docs.map(d=>d.data()); // authoritative from Firestore — replaces local
     smartFillWalSels();
+    fillRecurringWalSel();
     renderWalStrip();
     if(activePage('dompet')) renderWals();
     setSyncStatus('synced');
@@ -185,6 +206,21 @@ function startListeners(){
     CATS.expense=all.filter(c=>c.catType==='expense');
     fillCatSels(); fillFilters();
     if(activePage('settings')) renderCats();
+  }));
+
+  // ── BUDGETS listener ──
+  DB_UNSUBS.push(onSnapshot(uCol('budgets'),snap=>{
+    BUDGETS={};
+    snap.docs.forEach(d=>{ const b=d.data(); BUDGETS[b.catName]=b; });
+    if(activePage('laporan')) renderReport();
+    if(activePage('settings')) renderBudgets();
+    checkBudgetAlerts();
+  }));
+
+  // ── RECURRING listener ──
+  DB_UNSUBS.push(onSnapshot(uCol('recurring'),snap=>{
+    RECURRING=snap.docs.map(d=>d.data());
+    if(activePage('settings')) renderRecurring();
   }));
 }
 
@@ -256,6 +292,8 @@ onAuthStateChanged(auth, async user=>{
       for(const w of defaults) await saveWal(w);
     }
     checkRollover();
+    // Proses transaksi berulang yg jatuh tempo (delay kecil supaya listeners sudah aktif)
+    setTimeout(()=>processRecurring(), 2000);
   } else {
     CURRENT_USER=null;
     stopListeners();
@@ -306,11 +344,11 @@ window.goPage = function(id){
   document.getElementById('pg-'+id).classList.add('active');
   const btn=document.querySelector(`.bnav-btn[data-pg="${id}"]`);
   if(btn) btn.classList.add('on');
-  if(id==='home')    refreshHome();
+  if(id==='home')    { refreshHome(); renderDailySummary(); }
   if(id==='history'){fillFilters();renderTable();}
   if(id==='dompet')  renderWals();
   if(id==='laporan'){fillRepMonths();renderReport();}
-  if(id==='settings'){renderRems();renderRollHist();updNotifStatus();renderCats();}
+  if(id==='settings'){renderRems();renderRollHist();updNotifStatus();renderCats();renderBudgets();renderRecurring();}
   if(id==='profil'){renderProfil();}
   window.scrollTo(0,0);
 };
@@ -499,6 +537,7 @@ function refreshHome(){
 
   renderWalStrip();
   renderRecent();
+  renderDailySummary();
   // Only re-render trend chart if on home page and not already rendering
   if(activePage('home')) renderTrend();
 }
@@ -598,6 +637,7 @@ function fillCatSels(){
   const expEl=document.getElementById('expCat');
   if(incEl) incEl.innerHTML=allIncCats().map(c=>`<option value="${c.name}">${c.icon} ${c.name}</option>`).join('');
   if(expEl) expEl.innerHTML=allExpCats().map(c=>`<option value="${c.name}">${c.icon} ${c.name}</option>`).join('');
+  fillRecurringCatSel();
 }
 
 window.addCat=async function(type){
@@ -693,6 +733,7 @@ window.renderReport=function(){
   dc('monthly');
   const mCtx=document.getElementById('monthlyChart');if(!mCtx)return;
   CHARTS.monthly=new Chart(mCtx,{type:'line',data:{labels:mk.map(k=>{const d=new Date(k+'-01');return d.toLocaleDateString('id-ID',{month:'short',year:'2-digit'});}),datasets:[{label:'Masuk',data:mk.map(k=>md[k].income||0),borderColor:'#3dd68c',backgroundColor:'rgba(61,214,140,.1)',tension:.4,fill:true,pointRadius:3},{label:'Keluar',data:mk.map(k=>md[k].expense||0),borderColor:'#f06292',backgroundColor:'rgba(240,98,146,.1)',tension:.4,fill:true,pointRadius:3}]},options:{...CO,plugins:{legend:{labels:{color:'#9898b8',font:{size:11}}}},scales:{x:{ticks:{color:'#55556a',font:{size:10}},grid:{display:false}},y:{ticks:{color:'#55556a',font:{size:10},callback:v=>fnum(v)},grid:{color:GRID}}}}});
+  renderBudgetInReport(m);
 };
 
 // ══════════════════════════════════
@@ -1008,6 +1049,286 @@ window.toast=function(msg,type='green'){
   setTimeout(()=>{e.style.opacity='0';e.style.transform='translateY(10px)';setTimeout(()=>e.remove(),350);},2800);
 };
 
+// ══════════════════════════════════
+//  FITUR 1: BUDGET LIMIT PER KATEGORI
+// ══════════════════════════════════
+function renderBudgets(){
+  const el=document.getElementById('budgetItems');
+  if(!el) return;
+  const expCats=allExpCats();
+  if(!expCats.length){ el.innerHTML='<div style="padding:12px 16px;font-size:12px;color:var(--text3);">Belum ada kategori pengeluaran.</div>'; return; }
+  const curMonth=mstr(new Date());
+  let html='';
+  expCats.forEach(cat=>{
+    const bgt=BUDGETS[cat.name];
+    const spent=TXS.filter(t=>t.type==='expense'&&t.category===cat.name&&t.date.startsWith(curMonth)).reduce((s,t)=>s+t.amount,0);
+    const limit=bgt?bgt.amount:0;
+    const pct=limit>0?Math.min(Math.round(spent/limit*100),100):0;
+    const color=pct>=100?'var(--red)':pct>=75?'var(--orange)':'var(--accent-light)';
+    const bgtId=bgt?bgt.id:'';
+    html+=`
+    <div class="budget-item">
+      <div class="budget-item-top">
+        <span class="budget-cat-name">${cat.icon} ${cat.name}</span>
+        <div style="display:flex;gap:6px;align-items:center;">
+          ${limit>0?`<span class="budget-spent" style="color:${color};">${fmt(spent)} / ${fmt(limit)}</span>
+          <button class="tx-del" onclick="delBudget('${bgtId}')">✕</button>`
+          :`<button class="btn btn-sm btn-ghost" style="padding:4px 10px;font-size:11px;" onclick="openSetBudget('${cat.name}','${cat.icon}')">Set</button>`}
+        </div>
+      </div>
+      ${limit>0?`<div class="bar-track" style="margin-top:6px;"><div class="bar-fill" style="width:${pct}%;background:${color};transition:width .6s;"></div></div>`:''}
+    </div>`;
+  });
+  el.innerHTML=html;
+}
+
+function renderBudgetInReport(month){
+  const el=document.getElementById('reportBudgetSection');
+  if(!el) return;
+  const expCats=allExpCats();
+  const hasBudgets=expCats.some(c=>BUDGETS[c.name]);
+  if(!hasBudgets){ el.innerHTML=''; return; }
+  const m=month||mstr(new Date());
+  let html=`<div class="chart-card" style="margin-top:12px;">
+    <div class="chart-label">🎯 Budget vs Aktual — ${new Date(m+'-01').toLocaleDateString('id-ID',{month:'long',year:'numeric'})}</div>`;
+  expCats.forEach(cat=>{
+    const bgt=BUDGETS[cat.name];
+    if(!bgt) return;
+    const spent=TXS.filter(t=>t.type==='expense'&&t.category===cat.name&&t.date.startsWith(m)).reduce((s,t)=>s+t.amount,0);
+    const pct=Math.min(Math.round(spent/bgt.amount*100),100);
+    const color=pct>=100?'var(--red)':pct>=75?'var(--orange)':'var(--green)';
+    html+=`
+    <div style="margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-size:12px;color:var(--text2);">${cat.icon} ${cat.name}</span>
+        <span style="font-size:12px;font-weight:700;color:${color};">${pct}% — ${fmt(spent)} / ${fmt(bgt.amount)}</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color};"></div></div>
+    </div>`;
+  });
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+function checkBudgetAlerts(){
+  if(!activePage('home')&&!activePage('laporan')) return;
+  const curMonth=mstr(new Date());
+  const alerts=[];
+  allExpCats().forEach(cat=>{
+    const bgt=BUDGETS[cat.name];
+    if(!bgt) return;
+    const spent=TXS.filter(t=>t.type==='expense'&&t.category===cat.name&&t.date.startsWith(curMonth)).reduce((s,t)=>s+t.amount,0);
+    const pct=spent/bgt.amount*100;
+    if(pct>=100) alerts.push(`🔴 ${cat.name}: melebihi budget (${fmt(spent)}/${fmt(bgt.amount)})`);
+    else if(pct>=80) alerts.push(`🟡 ${cat.name}: 80%+ budget terpakai`);
+  });
+  const el=document.getElementById('budgetAlertBanner');
+  if(!el) return;
+  if(alerts.length){
+    el.classList.remove('hidden');
+    document.getElementById('budgetAlertMsg').innerHTML=alerts.map(a=>`<div>${a}</div>`).join('');
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
+let EDIT_BUDGET_CAT='';
+window.openSetBudget=function(catName, catIcon){
+  EDIT_BUDGET_CAT=catName;
+  document.getElementById('budgetCatLabel').textContent=catIcon+' '+catName;
+  document.getElementById('budgetAmtInput').value='';
+  document.getElementById('budgetAmtInput').dataset.raw='0';
+  document.getElementById('ovSetBudget').classList.add('show');
+};
+window.confirmSetBudget=async function(){
+  const amt=getAmt('budgetAmtInput');
+  if(!amt||amt<=0) return toast('⚠️ Masukkan jumlah budget!','orange');
+  setSyncStatus('syncing');
+  await saveBudget(EDIT_BUDGET_CAT, amt);
+  setSyncStatus('synced');
+  closeOv('ovSetBudget');
+  toast('✅ Budget disimpan!','green');
+};
+window.delBudget=async function(id){
+  if(!id) return;
+  setSyncStatus('syncing');
+  await delBudgetDb(id);
+  setSyncStatus('synced');
+  toast('🗑️ Budget dihapus','red');
+};
+
+// ══════════════════════════════════
+//  FITUR 2: TRANSAKSI BERULANG
+// ══════════════════════════════════
+function renderRecurring(){
+  const el=document.getElementById('recurringItems');
+  if(!el) return;
+  if(!RECURRING.length){ el.innerHTML='<div style="padding:12px 16px;font-size:12px;color:var(--text3);">Belum ada transaksi berulang.</div>'; return; }
+  el.innerHTML=RECURRING.map(r=>{
+    const freqLabel={daily:'Harian',weekly:'Mingguan',monthly:'Bulanan'}[r.freq]||r.freq;
+    const isExp=r.type==='expense';
+    return `
+    <div class="rem-item">
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+          <span style="font-size:15px;">${isExp?'❤️':'💚'}</span>
+          <span style="font-size:13px;font-weight:600;">${r.note}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text3);">${r.category} · ${freqLabel} · ${fmt(r.amount)}</div>
+        <div style="font-size:11px;color:var(--text3);">Berikutnya: <b style="color:var(--accent-light);">${r.nextDate}</b></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="toggle ${r.active?'on':''}" onclick="togRecurring('${r.id}')"></div>
+        <button class="tx-del" onclick="delRecurring('${r.id}')">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.showAddRecurring=function(){
+  document.getElementById('recAmt').value='';
+  document.getElementById('recAmt').dataset.raw='0';
+  document.getElementById('recNote').value='';
+  document.getElementById('recNextDate').value=today();
+  document.getElementById('ovAddRecurring').classList.add('show');
+};
+
+window.addRecurring=async function(){
+  const amt=getAmt('recAmt');
+  if(!amt||amt<=0) return toast('⚠️ Masukkan jumlah!','orange');
+  const walId=document.getElementById('recWal').value;
+  if(!walId) return toast('⚠️ Pilih dompet!','orange');
+  const wal=WALS.find(w=>w.id===walId);
+  const r={
+    id:uid(),
+    type:document.getElementById('recType').value,
+    amount:amt,
+    category:document.getElementById('recCat').value,
+    walletId:walId,
+    walletName:wal?wal.name:'',
+    note:document.getElementById('recNote').value||'—',
+    freq:document.getElementById('recFreq').value,
+    nextDate:document.getElementById('recNextDate').value,
+    active:true,
+    createdAt:Date.now()
+  };
+  setSyncStatus('syncing');
+  await saveRecurring(r);
+  setSyncStatus('synced');
+  closeOv('ovAddRecurring');
+  toast('✅ Transaksi berulang disimpan!','green');
+};
+
+window.togRecurring=async function(id){
+  const r=RECURRING.find(x=>x.id===id); if(!r) return;
+  r.active=!r.active;
+  await saveRecurring(r);
+  toast(r.active?'✅ Diaktifkan':'⏸️ Dinonaktifkan', r.active?'green':'orange');
+};
+window.delRecurring=async function(id){
+  setSyncStatus('syncing');
+  await delRecurringDb(id);
+  setSyncStatus('synced');
+  toast('🗑️ Dihapus','red');
+};
+
+// Jalankan transaksi berulang yang jatuh tempo
+async function processRecurring(){
+  if(!CURRENT_USER||!RECURRING.length||!WALS.length) return;
+  const todayStr=today();
+  let executed=0;
+  for(const r of RECURRING){
+    if(!r.active) continue;
+    if(r.nextDate>todayStr) continue;
+    // Cek apakah sudah dieksekusi hari ini
+    const alreadyDone=TXS.some(t=>t.recurringId===r.id&&t.date===todayStr);
+    if(alreadyDone) continue;
+    const wal=WALS.find(w=>w.id===r.walletId)||WALS[0];
+    if(!wal) continue;
+    if(r.type==='expense'&&wal.balance<r.amount) continue;
+    const tx={id:uid(),type:r.type,amount:r.amount,category:r.category,
+      walletId:wal.id,walletName:wal.name,note:r.note+' (Auto)',
+      date:todayStr,createdAt:Date.now(),recurringId:r.id};
+    wal.balance+=(r.type==='income'?1:-1)*r.amount;
+    // Hitung nextDate
+    let next=new Date(r.nextDate);
+    if(r.freq==='daily') next.setDate(next.getDate()+1);
+    else if(r.freq==='weekly') next.setDate(next.getDate()+7);
+    else if(r.freq==='monthly') next.setMonth(next.getMonth()+1);
+    r.nextDate=next.toISOString().split('T')[0];
+    await Promise.all([saveTx(tx),saveWal(wal),saveRecurring(r)]);
+    executed++;
+  }
+  if(executed>0) toast(`🔄 ${executed} transaksi berulang dieksekusi!`,'green');
+}
+
+// Update wallet selector di form recurring
+function fillRecurringWalSel(){
+  const el=document.getElementById('recWal'); if(!el) return;
+  el.innerHTML=WALS.map(w=>`<option value="${w.id}">${w.name} (${fmt(w.balance)})</option>`).join('')||'<option value="">— Buat dompet dulu —</option>';
+}
+// Update cat selector di form recurring
+function fillRecurringCatSel(){
+  const type=document.getElementById('recType')?document.getElementById('recType').value:'expense';
+  const el=document.getElementById('recCat'); if(!el) return;
+  const cats=type==='income'?allIncCats():allExpCats();
+  el.innerHTML=cats.map(c=>`<option value="${c.name}">${c.icon} ${c.name}</option>`).join('');
+}
+window.onRecTypeChange=function(){
+  fillRecurringCatSel();
+};
+
+// ══════════════════════════════════
+//  FITUR 3: RINGKASAN HARIAN
+// ══════════════════════════════════
+function renderDailySummary(){
+  const el=document.getElementById('dailySummary'); if(!el) return;
+  const todayStr=today();
+  const todayTxs=TXS.filter(t=>t.date===todayStr);
+  const inc=todayTxs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const exp=todayTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const net=inc-exp;
+  if(!todayTxs.length){
+    el.innerHTML=`<div class="daily-empty">📭 Belum ada transaksi hari ini</div>`;
+    return;
+  }
+  // Breakdown per kategori pengeluaran
+  const catMap={};
+  todayTxs.filter(t=>t.type==='expense').forEach(t=>{catMap[t.category]=(catMap[t.category]||0)+t.amount;});
+  const cats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
+  let html=`
+  <div class="daily-stats">
+    <div class="daily-stat-item"><div class="daily-stat-label">Masuk</div><div class="daily-stat-val" style="color:var(--green);">+${fmt(inc)}</div></div>
+    <div class="daily-stat-item"><div class="daily-stat-label">Keluar</div><div class="daily-stat-val" style="color:var(--red);">-${fmt(exp)}</div></div>
+    <div class="daily-stat-item"><div class="daily-stat-label">Bersih</div><div class="daily-stat-val" style="color:${net>=0?'var(--accent-light)':'var(--red)'}">${net>=0?'+':''}${fmt(net)}</div></div>
+  </div>`;
+  if(cats.length){
+    html+=`<div style="margin-top:8px;">`;
+    cats.slice(0,4).forEach(([cat,amt])=>{
+      const icon=getCatIcon(cat);
+      const pct=exp>0?Math.round(amt/exp*100):0;
+      html+=`<div class="daily-cat-row">
+        <span class="daily-cat-icon">${icon}</span>
+        <span class="daily-cat-name">${cat}</span>
+        <div class="daily-cat-bar-wrap"><div class="bar-fill" style="width:${pct}%;background:var(--red);opacity:.7;"></div></div>
+        <span class="daily-cat-amt">${fmt(amt)}</span>
+      </div>`;
+    });
+    html+=`</div>`;
+  }
+  el.innerHTML=html;
+}
+
+window.toggleDailySummary=function(){
+  const body=document.getElementById('dailySummaryBody');
+  const arrow=document.getElementById('dailySummaryArrow');
+  const isOpen=body.classList.contains('open');
+  body.classList.toggle('open',!isOpen);
+  if(arrow) arrow.style.transform=isOpen?'rotate(0deg)':'rotate(180deg)';
+};
+
+
+
 </script>
 <style>
 :root{--bg:#0d0d14;--bg2:#13131e;--bg3:#1a1a28;--card:#1e1e2e;--card2:#252538;--border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);--accent:#7c6fe0;--accent-light:#a89cf0;--green:#3dd68c;--green-dim:rgba(61,214,140,0.12);--red:#f06292;--red-dim:rgba(240,98,146,0.12);--yellow:#fbbf24;--orange:#fb923c;--orange-dim:rgba(251,146,60,0.12);--text:#f0f0f8;--text2:#9898b8;--text3:#55556a;--safe-t:env(safe-area-inset-top,0px);--safe-b:env(safe-area-inset-bottom,0px);--r:16px;--r-sm:10px;}
@@ -1265,6 +1586,28 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .loading-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:16px;}
 .spinner{width:40px;height:40px;border:3px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
+
+/* ── v2.0 NEW STYLES ── */
+
+/* DAILY SUMMARY */
+.daily-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:4px;}
+.daily-stat-item{background:var(--bg3);border-radius:var(--r-sm);padding:10px 8px;text-align:center;}
+.daily-stat-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;}
+.daily-stat-val{font-size:13px;font-weight:700;}
+.daily-cat-row{display:flex;align-items:center;gap:8px;padding:5px 0;}
+.daily-cat-icon{font-size:14px;flex-shrink:0;width:20px;text-align:center;}
+.daily-cat-name{font-size:12px;color:var(--text2);width:80px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.daily-cat-bar-wrap{flex:1;height:5px;background:var(--bg);border-radius:3px;overflow:hidden;}
+.daily-cat-amt{font-size:11px;font-weight:600;color:var(--red);flex-shrink:0;}
+.daily-empty{font-size:12px;color:var(--text3);text-align:center;padding:12px 0;}
+
+/* BUDGET ITEMS */
+.budget-item{padding:12px 16px;border-bottom:1px solid var(--border);}
+.budget-item:last-child{border-bottom:none;}
+.budget-item-top{display:flex;justify-content:space-between;align-items:center;}
+.budget-cat-name{font-size:13px;font-weight:600;color:var(--text);}
+.budget-spent{font-size:12px;font-weight:700;}
+
 </style>
 </head>
 <body>
@@ -1293,7 +1636,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 <div id="appShell">
   <!-- HEADER -->
   <div class="header">
-    <div class="logo">Fin<span>Track</span></div>
+    <div class="logo">Fin<span>Track</span> <span style="font-size:11px;background:var(--accent);color:white;border-radius:6px;padding:1px 6px;vertical-align:middle;font-weight:700;">v2</span></div>
     <div class="header-right">
       <div class="sync-dot synced" id="syncDot" title="Tersinkron"></div>
       <div class="icon-btn" onclick="exportExcel()" title="Export Excel">⬇️</div>
@@ -1311,6 +1654,14 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
       <div class="alert-body">
         <div class="alert-title" id="alertTitle"></div>
         <div class="alert-msg" id="alertMsg"></div>
+      </div>
+    </div>
+    <!-- Budget Alert Banner -->
+    <div class="alert hidden" id="budgetAlertBanner" style="border-color:rgba(240,98,146,.3);background:var(--red-dim);">
+      <div class="alert-ico">🎯</div>
+      <div class="alert-body">
+        <div class="alert-title" style="color:var(--red);">Peringatan Budget!</div>
+        <div class="alert-msg" id="budgetAlertMsg"></div>
       </div>
     </div>
     <div class="rollover-banner hidden" id="rolloverBanner">
@@ -1333,6 +1684,16 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
     <div class="chart-card">
       <div class="chart-label">📅 Tren 7 Hari</div>
       <div style="height:150px;"><canvas id="trendChart"></canvas></div>
+    </div>
+    <!-- RINGKASAN HARIAN -->
+    <div class="chart-card" style="margin-bottom:12px;">
+      <div class="chart-label" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;" onclick="toggleDailySummary()">
+        <span>📆 Ringkasan Hari Ini</span>
+        <span id="dailySummaryArrow" style="color:var(--text3);font-size:14px;transition:transform .25s;">▾</span>
+      </div>
+      <div id="dailySummaryBody" class="acc-body open" style="max-height:400px;">
+        <div id="dailySummary" style="padding-top:4px;"></div>
+      </div>
     </div>
     <div class="sec-title">Terbaru <a onclick="goPage('history')">Semua →</a></div>
     <div class="tx-list" id="recentList"></div>
@@ -1407,6 +1768,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
     <div class="chart-card"><div class="chart-label">🍩 Distribusi</div><div style="height:180px;"><canvas id="donutChart"></canvas></div></div>
     <div class="chart-card"><div class="chart-label">📊 Pengeluaran per Kategori</div><div style="height:200px;"><canvas id="expCatChart"></canvas></div></div>
     <div class="chart-card"><div class="chart-label">📅 Tren Bulanan</div><div style="height:180px;"><canvas id="monthlyChart"></canvas></div></div>
+    <div id="reportBudgetSection"></div>
   </div>
 
   <!-- PROFIL PAGE -->
@@ -1453,7 +1815,20 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 
   <!-- SETTINGS -->
   <div class="page" id="pg-settings">
-    <!-- Pengingat -->
+
+    <!-- Budget Limit per Kategori -->
+    <div class="setting-group">
+      <div class="setting-row"><div><div class="setting-label">🎯 Budget per Kategori</div><div class="setting-sub">Atur batas pengeluaran bulanan</div></div></div>
+      <div id="budgetItems" style="padding:0 16px 12px;"></div>
+    </div>
+
+    <!-- Transaksi Berulang -->
+    <div class="setting-group">
+      <div class="setting-row"><div><div class="setting-label">🔁 Transaksi Berulang</div><div class="setting-sub">Otomatis dieksekusi saat jatuh tempo</div></div><button class="btn btn-sm btn-accent" onclick="showAddRecurring()">+ Tambah</button></div>
+      <div id="recurringItems"></div>
+    </div>
+
+    <!-- Pengingat Harian -->
     <div class="setting-group">
       <div class="setting-row"><div><div class="setting-label">⏰ Pengingat Harian</div><div class="setting-sub">Notifikasi mencatat transaksi</div></div><button class="btn btn-sm btn-accent" onclick="showAddRem()">+ Tambah</button></div>
       <div id="notifStatus" style="padding:10px 16px;font-size:12px;color:var(--text3);border-bottom:1px solid var(--border);"></div>
@@ -1606,6 +1981,56 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
     <div class="sheet-acts">
       <button class="btn btn-ghost" style="flex:1;" onclick="closeOv('ovClear')">Batal</button>
       <button class="btn btn-red" style="flex:1;" onclick="clearAll()">Ya, Hapus</button>
+    </div>
+  </div>
+</div>
+
+<!-- OVERLAY: SET BUDGET -->
+<div class="overlay" id="ovSetBudget" onclick="closeOv('ovSetBudget')">
+  <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">🎯 Set Budget</div>
+    <div style="font-size:14px;font-weight:600;color:var(--accent-light);margin-bottom:12px;" id="budgetCatLabel"></div>
+    <div class="fg"><label>Limit Budget Bulanan (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="budgetAmtInput" placeholder="0" inputmode="numeric" oninput="fmtAmt(this)"></div></div>
+    <div class="sheet-acts">
+      <button class="btn btn-ghost" style="flex:1;" onclick="closeOv('ovSetBudget')">Batal</button>
+      <button class="btn btn-accent" style="flex:2;" onclick="confirmSetBudget()">✅ Simpan Budget</button>
+    </div>
+  </div>
+</div>
+
+<!-- OVERLAY: ADD RECURRING -->
+<div class="overlay" id="ovAddRecurring" onclick="closeOv('ovAddRecurring')">
+  <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">🔁 Tambah Transaksi Berulang</div>
+    <div class="row2">
+      <div class="fg">
+        <label>Tipe</label>
+        <select id="recType" onchange="onRecTypeChange()">
+          <option value="expense">❤️ Pengeluaran</option>
+          <option value="income">💚 Pemasukan</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Frekuensi</label>
+        <select id="recFreq">
+          <option value="monthly">Bulanan</option>
+          <option value="weekly">Mingguan</option>
+          <option value="daily">Harian</option>
+        </select>
+      </div>
+    </div>
+    <div class="fg"><label>Jumlah (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="recAmt" placeholder="0" inputmode="numeric" oninput="fmtAmt(this)"></div></div>
+    <div class="row2">
+      <div class="fg"><label>Kategori</label><select id="recCat"></select></div>
+      <div class="fg"><label>Dompet</label><select id="recWal"></select></div>
+    </div>
+    <div class="fg"><label>Keterangan</label><input type="text" id="recNote" placeholder="Nama transaksi..."></div>
+    <div class="fg"><label>Tanggal Mulai / Berikutnya</label><input type="date" id="recNextDate"></div>
+    <div class="sheet-acts">
+      <button class="btn btn-ghost" style="flex:1;" onclick="closeOv('ovAddRecurring')">Batal</button>
+      <button class="btn btn-accent" style="flex:2;" onclick="addRecurring()">+ Simpan</button>
     </div>
   </div>
 </div>
