@@ -281,9 +281,6 @@ function showApp(user){
   document.getElementById('incDate').value=today();
   document.getElementById('expDate').value=today();
   fillCatSels(); fillFilters(); fillRepMonths();
-  // Set profil avatar immediately
-  const av=document.getElementById('userAvatar');
-  if(av&&user.photoURL) av.src=user.photoURL;
   goPage('home');
 }
 
