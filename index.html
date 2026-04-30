@@ -941,7 +941,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 
 /* APP SHELL */
 #appShell{display:none;}
-{padding-bottom:calc(90px + var(--safe-b));}
+body.logged-in{padding-bottom:calc(90px + var(--safe-b));}
 
 /* HEADER */
 .header{position:sticky;top:0;z-index:50;padding:calc(12px + var(--safe-t)) 16px 12px;background:rgba(13,13,20,0.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
@@ -1211,8 +1211,8 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
   <div class="page" id="pg-catat">
     <div class="qadd-wrap">
       <div class="qadd-tabs">
-        <button class="qadd-tab inc on" id="tabInc" onclick="switchTab('income')">💚 Pemasukan</button>
-        <button class="qadd-tab exp" id="tabExp" onclick="switchTab('expense')">❤️ Pengeluaran</button>
+        <button class="qadd-tab inc on" id="tabInc" onclick="switchTab('income')">💵 Pemasukan</button>
+        <button class="qadd-tab exp" id="tabExp" onclick="switchTab('expense')">💸 Pengeluaran</button>
       </div>
       <div class="qadd-body">
         <div class="qadd-form on" id="fInc">
