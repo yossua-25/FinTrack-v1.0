@@ -669,12 +669,102 @@ function checkAlert(){
   } else el.classList.add('hidden');
 }
 
+// ══════════════════════════════════
+//  EDIT TRANSAKSI
+// ══════════════════════════════════
+let EDIT_TX_ID=null;
+window.openEditTx=function(id){
+  const t=TXS.find(x=>x.id===id); if(!t) return;
+  EDIT_TX_ID=id;
+  // Isi form
+  document.getElementById('etType').value=t.type;
+  fillEditTxCats(t.type, t.category);
+  fillEditTxWals(t.walletId);
+  const amtEl=document.getElementById('etAmt');
+  amtEl.value=t.amount.toLocaleString('id-ID');
+  amtEl.dataset.raw=String(t.amount);
+  amtEl.dataset.calcMode='0';
+  hideCalcPreview(amtEl);
+  document.getElementById('etNote').value=t.note||'';
+  document.getElementById('etDate').value=t.date;
+  document.getElementById('ovEditTx').classList.add('show');
+};
+
+function fillEditTxCats(type, selected){
+  const cats=type==='income'?allIncCats():allExpCats();
+  const el=document.getElementById('etCat');
+  el.innerHTML=cats.map(c=>`<option value="${c.name}" ${c.name===selected?'selected':''}>${c.icon} ${c.name}</option>`).join('');
+}
+function fillEditTxWals(selectedId){
+  const el=document.getElementById('etWal');
+  el.innerHTML=WALS.map(w=>`<option value="${w.id}" ${w.id===selectedId?'selected':''}>${w.name} (${fmt(w.balance)})</option>`).join('');
+}
+window.onEtTypeChange=function(){
+  const t=document.getElementById('etType').value;
+  fillEditTxCats(t,'');
+};
+
+window.confirmEditTx=async function(){
+  if(!EDIT_TX_ID) return;
+  const old=TXS.find(x=>x.id===EDIT_TX_ID); if(!old) return;
+  const amt=getAmt('etAmt');
+  if(!amt||amt<=0) return toast('⚠️ Masukkan jumlah yang valid!','orange');
+  const newType=document.getElementById('etType').value;
+  const newWalId=document.getElementById('etWal').value;
+  const newWal=WALS.find(w=>w.id===newWalId);
+  if(!newWal) return toast('⚠️ Pilih dompet!','orange');
+
+  setSyncStatus('syncing');
+
+  // Kembalikan saldo dompet lama
+  const oldWal=WALS.find(w=>w.id===old.walletId);
+  if(oldWal){
+    oldWal.balance += old.type==='income' ? -old.amount : old.amount;
+    await saveWal(oldWal);
+  }
+
+  // Terapkan saldo dompet baru
+  newWal.balance += newType==='income' ? amt : -amt;
+  await saveWal(newWal);
+
+  // Update transaksi
+  const updated={...old,
+    type: newType,
+    amount: amt,
+    category: document.getElementById('etCat').value,
+    walletId: newWalId,
+    walletName: newWal.name,
+    note: document.getElementById('etNote').value||'—',
+    date: document.getElementById('etDate').value,
+    updatedAt: Date.now()
+  };
+  await saveTx(updated);
+  setSyncStatus('synced');
+  closeOv('ovEditTx');
+  EDIT_TX_ID=null;
+  toast('✅ Transaksi diperbarui!','green');
+};
+
 function renderRecent(){
   const el=document.getElementById('recentList');
   if(!el)return;
   const newHtml=!TXS.length
     ?'<div class="empty"><div class="empty-ico">📭</div>Belum ada transaksi</div>'
-    :TXS.slice(0,5).map(t=>`<div class="tx-item"><div class="tx-icon ${t.type==='income'?'inc':'exp'}">${getCatIcon(t.category)||'💸'}</div><div class="tx-body"><div class="tx-note">${t.note}</div><div class="tx-meta">${t.date} · ${t.category} · ${t.walletName}</div></div><div class="tx-amt ${t.type==='income'?'inc':'exp'}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</div></div>`).join('');
+    :TXS.slice(0,5).map(t=>`
+    <div class="tx-item">
+      <div class="tx-icon ${t.type==='income'?'inc':'exp'}">${getCatIcon(t.category)||'💸'}</div>
+      <div class="tx-body">
+        <div class="tx-note">${t.note}</div>
+        <div class="tx-meta">${t.date} · ${t.category} · ${t.walletName}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div class="tx-amt ${t.type==='income'?'inc':'exp'}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</div>
+        <div style="display:flex;gap:5px;margin-top:5px;justify-content:flex-end;">
+          <button class="edit-btn" onclick="openEditTx('${t.id}')">✏️</button>
+          <button class="tx-del" onclick="delTx('${t.id}')">✕</button>
+        </div>
+      </div>
+    </div>`).join('');
   if(el.innerHTML!==newHtml) el.innerHTML=newHtml;
 }
 
@@ -735,7 +825,10 @@ function renderTable(){
       </div>
       <div style="text-align:right;flex-shrink:0;">
         <div class="tx-amt ${t.type==='income'?'inc':'exp'}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</div>
-        <button class="tx-del" style="margin-top:5px;" onclick="delTx('${t.id}')">✕</button>
+        <div style="display:flex;gap:5px;margin-top:5px;justify-content:flex-end;">
+          <button class="edit-btn" onclick="openEditTx('${t.id}')">✏️</button>
+          <button class="tx-del" onclick="delTx('${t.id}')">✕</button>
+        </div>
       </div>
     </div>`).join('');
   const pag=document.getElementById('pagination');
@@ -2418,6 +2511,48 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
     <div class="sheet-acts">
       <button class="btn btn-ghost" style="flex:1;" onclick="closeOv('ovAddRecurring')">Batal</button>
       <button class="btn btn-accent" style="flex:2;" onclick="addRecurring()">+ Simpan</button>
+    </div>
+  </div>
+</div>
+
+<!-- OVERLAY: EDIT TRANSAKSI -->
+<div class="overlay" id="ovEditTx" onclick="closeOv('ovEditTx')">
+  <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">✏️ Edit Transaksi</div>
+    <div class="row2">
+      <div class="fg">
+        <label>Tipe</label>
+        <select id="etType" onchange="onEtTypeChange()">
+          <option value="expense">❤️ Pengeluaran</option>
+          <option value="income">💚 Pemasukan</option>
+        </select>
+      </div>
+      <div class="fg"><label>Tanggal</label><input type="date" id="etDate"></div>
+    </div>
+    <div class="fg"><label>Jumlah (Rp)</label>
+      <div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="etAmt" placeholder="0" inputmode="decimal" oninput="fmtAmt(this)"></div>
+      <div class="calc-strip">
+        <button onclick="calcBtn('etAmt','+')">+</button>
+        <button onclick="calcBtn('etAmt','-')">−</button>
+        <button onclick="calcBtn('etAmt','*')">×</button>
+        <button onclick="calcBtn('etAmt','/')">÷</button>
+        <button onclick="calcBtn('etAmt','C')">C</button>
+        <button onclick="calcBtn('etAmt','⌫')">⌫</button>
+        <button class="calc-eq" onclick="calcBtn('etAmt','=')">=</button>
+      </div>
+    </div>
+    <div class="row2">
+      <div class="fg"><label>Kategori</label><select id="etCat"></select></div>
+      <div class="fg"><label>Dompet</label><select id="etWal"></select></div>
+    </div>
+    <div class="fg"><label>Keterangan</label><input type="text" id="etNote" placeholder="Keterangan transaksi..."></div>
+    <div style="background:var(--orange-dim);border:1px solid rgba(251,146,60,0.3);border-radius:var(--r-sm);padding:10px 12px;font-size:11px;color:var(--text2);margin-bottom:12px;">
+      ⚠️ Saldo dompet akan disesuaikan otomatis dengan perubahan yang dibuat.
+    </div>
+    <div class="sheet-acts">
+      <button class="btn btn-ghost" style="flex:1;" onclick="closeOv('ovEditTx')">Batal</button>
+      <button class="btn btn-accent" style="flex:2;" onclick="confirmEditTx()">✅ Simpan Perubahan</button>
     </div>
   </div>
 </div>
