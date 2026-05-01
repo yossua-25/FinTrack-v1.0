@@ -398,6 +398,18 @@ window.fmtAmt=function(el){
   el.value=parseInt(v).toLocaleString('id-ID');
 };
 
+function parseCalcExpr(raw){
+  // raw bisa: "7.004.955+78000" atau "7004955+78000" atau "50.000*12"
+  // Strategi: hapus titik yang jadi pemisah ribuan (bukan desimal)
+  // Titik pemisah ribuan = titik yang diikuti tepat 3 digit sebelum operator/akhir
+  let expr = raw
+    .replace(/(\d)\.(\d{3})(?=[\d.])/g, '$1$2')  // 7.004.955 → 7004955
+    .replace(/(\d)\.(\d{3})(?=[+\-*/=\s]|$)/g, '$1$2')
+    .replace(/,/g, '.')  // koma desimal → titik
+    .replace(/[^0-9+\-*/().]/g, '');
+  return expr;
+}
+
 function showCalcPreview(el){
   const id='calcprev_'+el.id;
   let prev=document.getElementById(id);
@@ -408,8 +420,8 @@ function showCalcPreview(el){
     el.closest('.amt-wrap').insertAdjacentElement('afterend', prev);
   }
   try{
-    // parse: ganti titik pemisah ribuan sebelum eval
-    const expr=el.value.replace(/\./g,'').replace(/,/g,'.').replace(/[^0-9+\-*/().]/g,'');
+    const expr=parseCalcExpr(el.value);
+    if(!expr){ prev.innerHTML='<span style="color:var(--text3)">Ketik ekspresi lalu tekan ✓</span>'; return; }
     // eslint-disable-next-line no-new-func
     const result=Function('"use strict";return ('+expr+')')();
     if(isFinite(result)&&result>=0){
@@ -462,10 +474,9 @@ window.calcBtn=function(inputId, val){
 function getAmt(id){
   const el=document.getElementById(id);
   if(!el)return 0;
-  // Jika masih mode kalkulator, coba evaluasi dulu
   if(el.dataset.calcMode==='1'){
     try{
-      const expr=el.value.replace(/\./g,'').replace(/,/g,'.').replace(/[^0-9+\-*/().]/g,'');
+      const expr=parseCalcExpr(el.value);
       // eslint-disable-next-line no-new-func
       const result=Function('"use strict";return ('+expr+')')();
       if(isFinite(result)&&result>0) return Math.round(result);
@@ -520,13 +531,13 @@ window.addWallet=async function(){
   const name=document.getElementById('wName').value.trim();
   if(!name) return toast('⚠️ Masukkan nama!','orange');
   const bal=getAmt('wBal');
-  const w={id:uid(),name,type:document.getElementById('wType').value,balance:isNaN(bal)?0:bal};
+  const interest=parseFloat(document.getElementById('wInterest').value)||0;
+  const w={id:uid(),name,type:document.getElementById('wType').value,balance:isNaN(bal)?0:bal,interestRate:interest};
   document.getElementById('wName').value='';
   document.getElementById('wBal').value='';
-  // Simpan dulu ke Firestore — listener akan update UI otomatis
+  document.getElementById('wInterest').value='';
   setSyncStatus('syncing');
   await saveWal(w);
-  // Firestore listener akan panggil renderWals() & smartFillWalSels() otomatis
   setSyncStatus('synced');
   fillFilters();
   toast('✅ Dompet ditambahkan!','green');
@@ -535,21 +546,28 @@ window.addWallet=async function(){
 function renderWals(){
   const el=document.getElementById('walList');
   if(!WALS.length){el.innerHTML='<div class="empty"><div class="empty-ico">👛</div>Belum ada dompet</div>';return;}
-  el.innerHTML=WALS.map(w=>`
+  el.innerHTML=WALS.map(w=>{
+    const rate=w.interestRate||0;
+    const monthlyInterest=rate>0?Math.round(w.balance*(rate/100/12)):0;
+    const interestBadge=rate>0?`<div class="wal-interest-badge">📈 ${rate}%/thn · +${fmt(monthlyInterest)}/bln</div>`:'';
+    return `
     <div class="wallet-card-full">
       <div class="wallet-icon-big">${W_ICON[w.type]||'💰'}</div>
       <div class="wallet-info">
         <div class="wallet-name">${w.name}</div>
         <div class="wallet-type">${w.type}</div>
+        ${interestBadge}
       </div>
       <div style="text-align:right;">
         <div class="wallet-bal">${fmt(w.balance)}</div>
+        ${rate>0?`<div style="font-size:11px;color:var(--green);margin-top:2px;">+${fmt(Math.round(w.balance*rate/100))}/thn</div>`:''}
         <div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end;">
           <button class="edit-btn" onclick="openEditWal('${w.id}')">✏️ Edit</button>
           <button class="tx-del" onclick="openDelWal('${w.id}')">🗑️</button>
         </div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 window.openDelWal=function(id){DEL_WAL_ID=id;document.getElementById('ovDelWal').classList.add('show');};
@@ -560,7 +578,9 @@ window.openEditWal=function(id){
   EDIT_WAL_ID=id;
   document.getElementById('editWalName').value=w.name;
   document.getElementById('editWalType').value=w.type;
-  document.getElementById('editWalBal').value=w.balance;
+  document.getElementById('editWalBal').value=w.balance.toLocaleString('id-ID');
+  document.getElementById('editWalBal').dataset.raw=String(w.balance);
+  document.getElementById('editWalInterest').value=w.interestRate||'';
   document.getElementById('ovEditWal').classList.add('show');
 };
 window.confirmEditWal=async function(){
@@ -569,9 +589,10 @@ window.confirmEditWal=async function(){
   const name=document.getElementById('editWalName').value.trim();
   const type=document.getElementById('editWalType').value;
   const bal=getAmt('editWalBal');
+  const interest=parseFloat(document.getElementById('editWalInterest').value)||0;
   if(!name) return toast('⚠️ Nama tidak boleh kosong!','orange');
   if(isNaN(bal)||bal<0) return toast('⚠️ Saldo tidak valid!','orange');
-  w.name=name; w.type=type; w.balance=bal;
+  w.name=name; w.type=type; w.balance=bal; w.interestRate=interest;
   setSyncStatus('syncing');
   await saveWal(w);
   setSyncStatus('synced');
@@ -1896,6 +1917,8 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .spinner{width:40px;height:40px;border:3px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 
+.wal-interest-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--green);background:rgba(61,214,140,.12);border:1px solid rgba(61,214,140,.25);border-radius:20px;padding:2px 8px;margin-top:4px;}
+
 /* ── KALKULATOR INLINE ── */
 .calc-strip{display:flex;gap:6px;margin-top:6px;flex-wrap:nowrap;}
 .calc-strip button{flex:1;padding:7px 4px;font-size:15px;font-weight:700;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r-sm);color:var(--text2);cursor:pointer;transition:background .15s;line-height:1;}
@@ -2071,6 +2094,8 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
       <div class="fg"><label>Nama Dompet</label><input type="text" id="wName" placeholder="BCA, Tunai, OVO..."></div>
       <div class="row2">
         <div class="fg"><label>Tipe</label><select id="wType"><option value="Bank">🏦 Bank</option><option value="Tunai">💵 Tunai</option><option value="E-Wallet">📱 E-Wallet</option><option value="Tabungan">🏛️ Tabungan</option><option value="Investasi">📈 Investasi</option></select></div>
+        <div class="fg"><label>Bunga/Tahun (%)</label><input type="number" id="wInterest" placeholder="0" min="0" max="100" step="0.01" style="text-align:right;"></div>
+      </div>
         <div class="fg"><label>Saldo Awal</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input type="text" id="wBal" placeholder="0" inputmode="decimal" oninput="fmtAmt(this)"></div><div class="calc-strip"><button onclick="calcBtn('wBal','+')">+</button><button onclick="calcBtn('wBal','-')">−</button><button onclick="calcBtn('wBal','*')">×</button><button onclick="calcBtn('wBal','/')">÷</button><button onclick="calcBtn('wBal','C')">C</button><button onclick="calcBtn('wBal','⌫')">⌫</button><button class="calc-eq" onclick="calcBtn('wBal','=')">=</button></div></div>
       </div>
       <button class="btn btn-accent" onclick="addWallet()">+ Tambah</button>
@@ -2322,8 +2347,9 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
           <option value="Investasi">📈 Investasi</option>
         </select>
       </div>
-      <div class="fg"><label>Saldo (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input type="text" id="editWalBal" placeholder="0" inputmode="numeric" oninput="fmtAmt(this)"></div></div>
+      <div class="fg"><label>Bunga/Tahun (%)</label><input type="number" id="editWalInterest" placeholder="0" min="0" max="100" step="0.01" style="text-align:right;"></div>
     </div>
+    <div class="fg"><label>Saldo (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input type="text" id="editWalBal" placeholder="0" inputmode="decimal" oninput="fmtAmt(this)"></div><div class="calc-strip"><button onclick="calcBtn('editWalBal','+')">+</button><button onclick="calcBtn('editWalBal','-')">−</button><button onclick="calcBtn('editWalBal','*')">×</button><button onclick="calcBtn('editWalBal','/')">÷</button><button onclick="calcBtn('editWalBal','C')">C</button><button onclick="calcBtn('editWalBal','⌫')">⌫</button><button class="calc-eq" onclick="calcBtn('editWalBal','=')">=</button></div></div>
     <div style="background:var(--orange-dim);border:1px solid rgba(251,146,60,0.3);border-radius:var(--r-sm);padding:10px 12px;font-size:11px;color:var(--text2);margin-bottom:12px;">
       ⚠️ Mengubah saldo langsung tidak mencatat transaksi. Gunakan fitur ini hanya untuk koreksi awal.
     </div>
