@@ -377,15 +377,100 @@ window.switchTab=function(t){
 //  TRANSACTIONS
 // ══════════════════════════════════
 // Format input jadi 1.000.000 saat mengetik
+// ══════════════════════════════════
+//  KALKULATOR INLINE
+// ══════════════════════════════════
+let CALC_ACTIVE_ID = null;
+
 window.fmtAmt=function(el){
-  let v=el.value.replace(/[^0-9]/g,'');
+  // Jika ada operator, tampilkan mode kalkulator
+  const raw = el.value;
+  if(/[+\-*/]/.test(raw)){
+    el.dataset.calcMode='1';
+    showCalcPreview(el);
+    return;
+  }
+  el.dataset.calcMode='0';
+  hideCalcPreview(el);
+  let v=raw.replace(/[^0-9]/g,'');
   if(!v){el.value='';el.dataset.raw='0';return;}
   el.dataset.raw=v;
   el.value=parseInt(v).toLocaleString('id-ID');
 };
+
+function showCalcPreview(el){
+  const id='calcprev_'+el.id;
+  let prev=document.getElementById(id);
+  if(!prev){
+    prev=document.createElement('div');
+    prev.id=id;
+    prev.className='calc-preview';
+    el.closest('.amt-wrap').insertAdjacentElement('afterend', prev);
+  }
+  try{
+    // parse: ganti titik pemisah ribuan sebelum eval
+    const expr=el.value.replace(/\./g,'').replace(/,/g,'.').replace(/[^0-9+\-*/().]/g,'');
+    // eslint-disable-next-line no-new-func
+    const result=Function('"use strict";return ('+expr+')')();
+    if(isFinite(result)&&result>=0){
+      el.dataset.raw=String(Math.round(result));
+      prev.innerHTML=`= <b>${Math.round(result).toLocaleString('id-ID')}</b> <span class="calc-apply" onclick="applyCalc('${el.id}')">✓ Pakai</span>`;
+      prev.style.color='var(--green)';
+    } else {
+      prev.innerHTML='<span style="color:var(--red)">⚠️ Hasil tidak valid</span>';
+    }
+  }catch(e){
+    prev.innerHTML='<span style="color:var(--text3)">Ketik ekspresi lalu tekan ✓</span>';
+  }
+}
+
+function hideCalcPreview(el){
+  const prev=document.getElementById('calcprev_'+el.id);
+  if(prev) prev.remove();
+}
+
+window.applyCalc=function(inputId){
+  const el=document.getElementById(inputId); if(!el) return;
+  const raw=el.dataset.raw||'0';
+  el.dataset.calcMode='0';
+  el.value=parseInt(raw).toLocaleString('id-ID');
+  hideCalcPreview(el);
+  el.focus();
+};
+
+// Tombol kalkulator di overlay
+window.calcBtn=function(inputId, val){
+  const el=document.getElementById(inputId); if(!el) return;
+  if(val==='C'){
+    el.value=''; el.dataset.raw='0';
+    hideCalcPreview(el); return;
+  }
+  if(val==='⌫'){
+    el.value=el.value.slice(0,-1);
+    fmtAmt(el); return;
+  }
+  if(val==='='){
+    applyCalc(inputId); return;
+  }
+  // operator atau angka
+  const cur=el.value;
+  el.value=cur+val;
+  el.dataset.calcMode='1';
+  showCalcPreview(el);
+};
+
 function getAmt(id){
   const el=document.getElementById(id);
   if(!el)return 0;
+  // Jika masih mode kalkulator, coba evaluasi dulu
+  if(el.dataset.calcMode==='1'){
+    try{
+      const expr=el.value.replace(/\./g,'').replace(/,/g,'.').replace(/[^0-9+\-*/().]/g,'');
+      // eslint-disable-next-line no-new-func
+      const result=Function('"use strict";return ('+expr+')')();
+      if(isFinite(result)&&result>0) return Math.round(result);
+    }catch(e){}
+  }
   const raw=el.dataset.raw||el.value.replace(/[^0-9]/g,'');
   return parseFloat(raw)||0;
 }
@@ -942,7 +1027,7 @@ async function sendDailySummaryEmailJS(){
   const dateLabel=new Date(todayStr+'T00:00:00').toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const html=`<div style="font-family:'Segoe UI',Arial,sans-serif;background:#0d0d14;padding:24px;border-radius:16px;max-width:520px;margin:0 auto;">
   <div style="margin-bottom:16px;">
-    <div style="font-size:22px;font-weight:800;color:#f0f0f8;">Fin<span style="color:#a89cf0;">Track</span> <span style="font-size:11px;background:#7c6fe0;color:white;border-radius:6px;padding:2px 7px;">v2</span></div>
+    <div style="font-size:22px;font-weight:800;color:#f0f0f8;">Fin<span style="color:#a89cf0;">Track</span> <span style="font-size:11px;background:#7c6fe0;color:white;border-radius:6px;padding:2px 7px;">v1.0</span></div>
     <div style="font-size:13px;color:#9898b8;margin-top:4px;">📆 ${dateLabel}</div>
     <div style="font-size:13px;color:#9898b8;">Halo <b style="color:#f0f0f8;">${name}</b> 👋</div>
   </div>
@@ -1811,7 +1896,15 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .spinner{width:40px;height:40px;border:3px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 
-/* ── v1.0 NEW STYLES ── */
+/* ── KALKULATOR INLINE ── */
+.calc-strip{display:flex;gap:6px;margin-top:6px;flex-wrap:nowrap;}
+.calc-strip button{flex:1;padding:7px 4px;font-size:15px;font-weight:700;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r-sm);color:var(--text2);cursor:pointer;transition:background .15s;line-height:1;}
+.calc-strip button:active{background:var(--border2);}
+.calc-strip .calc-eq{background:var(--accent);color:white;border-color:var(--accent);flex:1.4;}
+.calc-preview{margin-top:5px;font-size:13px;color:var(--green);padding:6px 10px;background:var(--bg3);border-radius:var(--r-sm);display:flex;align-items:center;gap:8px;}
+.calc-apply{background:var(--green);color:#0d0d14;font-size:11px;font-weight:800;padding:3px 10px;border-radius:20px;cursor:pointer;margin-left:auto;}
+
+/* ── v2.0 NEW STYLES ── */
 
 /* DAILY SUMMARY */
 .daily-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:4px;}
@@ -1932,7 +2025,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
       </div>
       <div class="qadd-body">
         <div class="qadd-form on" id="fInc">
-          <div class="fg"><label>Jumlah (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="incAmt" placeholder="0" inputmode="numeric" oninput="fmtAmt(this)"></div></div>
+          <div class="fg"><label>Jumlah (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="incAmt" placeholder="0" inputmode="decimal" oninput="fmtAmt(this)"></div><div class="calc-strip"><button onclick="calcBtn('incAmt','+')">+</button><button onclick="calcBtn('incAmt','-')">−</button><button onclick="calcBtn('incAmt','*')">×</button><button onclick="calcBtn('incAmt','/')">÷</button><button onclick="calcBtn('incAmt','C')">C</button><button onclick="calcBtn('incAmt','⌫')">⌫</button><button class="calc-eq" onclick="calcBtn('incAmt','=')">=</button></div></div>
           <div class="row2">
             <div class="fg"><label>Kategori</label><select id="incCat"><option value="Gaji">💼 Gaji</option><option value="Freelance">💻 Freelance</option><option value="Investasi">📈 Investasi</option><option value="Bonus">🎁 Bonus</option><option value="Transfer">🔄 Transfer</option><option value="Saldo Bawaan">🔁 Saldo Bawaan</option><option value="Lainnya">✨ Lainnya</option></select></div>
             <div class="fg"><label>Dompet</label><select id="incWal"></select></div>
@@ -1942,7 +2035,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
           <button class="btn btn-green" onclick="addTx('income')">+ Tambah Pemasukan</button>
         </div>
         <div class="qadd-form" id="fExp">
-          <div class="fg"><label>Jumlah (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="expAmt" placeholder="0" inputmode="numeric" oninput="fmtAmt(this)"></div></div>
+          <div class="fg"><label>Jumlah (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="expAmt" placeholder="0" inputmode="decimal" oninput="fmtAmt(this)"></div><div class="calc-strip"><button onclick="calcBtn('expAmt','+')">+</button><button onclick="calcBtn('expAmt','-')">−</button><button onclick="calcBtn('expAmt','*')">×</button><button onclick="calcBtn('expAmt','/')">÷</button><button onclick="calcBtn('expAmt','C')">C</button><button onclick="calcBtn('expAmt','⌫')">⌫</button><button class="calc-eq" onclick="calcBtn('expAmt','=')">=</button></div></div>
           <div class="row2">
             <div class="fg"><label>Kategori</label><select id="expCat"><option value="Makanan">🍜 Makanan</option><option value="Transport">🚗 Transport</option><option value="Belanja">🛍️ Belanja</option><option value="Tagihan">💡 Tagihan</option><option value="Kesehatan">🏥 Kesehatan</option><option value="Pendidikan">📚 Pendidikan</option><option value="Hiburan">🎮 Hiburan</option><option value="Tabungan">🏦 Tabungan</option><option value="Lainnya">✨ Lainnya</option></select></div>
             <div class="fg"><label>Dompet</label><select id="expWal"></select></div>
@@ -1978,7 +2071,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
       <div class="fg"><label>Nama Dompet</label><input type="text" id="wName" placeholder="BCA, Tunai, OVO..."></div>
       <div class="row2">
         <div class="fg"><label>Tipe</label><select id="wType"><option value="Bank">🏦 Bank</option><option value="Tunai">💵 Tunai</option><option value="E-Wallet">📱 E-Wallet</option><option value="Tabungan">🏛️ Tabungan</option><option value="Investasi">📈 Investasi</option></select></div>
-        <div class="fg"><label>Saldo Awal</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input type="text" id="wBal" placeholder="0" inputmode="numeric" oninput="fmtAmt(this)"></div></div>
+        <div class="fg"><label>Saldo Awal</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input type="text" id="wBal" placeholder="0" inputmode="decimal" oninput="fmtAmt(this)"></div><div class="calc-strip"><button onclick="calcBtn('wBal','+')">+</button><button onclick="calcBtn('wBal','-')">−</button><button onclick="calcBtn('wBal','*')">×</button><button onclick="calcBtn('wBal','/')">÷</button><button onclick="calcBtn('wBal','C')">C</button><button onclick="calcBtn('wBal','⌫')">⌫</button><button class="calc-eq" onclick="calcBtn('wBal','=')">=</button></div></div>
       </div>
       <button class="btn btn-accent" onclick="addWallet()">+ Tambah</button>
     </div>
@@ -2259,7 +2352,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
     <div class="sheet-handle"></div>
     <div class="sheet-title">🎯 Set Budget</div>
     <div style="font-size:14px;font-weight:600;color:var(--accent-light);margin-bottom:12px;" id="budgetCatLabel"></div>
-    <div class="fg"><label>Limit Budget Bulanan (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="budgetAmtInput" placeholder="0" inputmode="numeric" oninput="fmtAmt(this)"></div></div>
+    <div class="fg"><label>Limit Budget Bulanan (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="budgetAmtInput" placeholder="0" inputmode="decimal" oninput="fmtAmt(this)"></div><div class="calc-strip"><button onclick="calcBtn('budgetAmtInput','+')">+</button><button onclick="calcBtn('budgetAmtInput','-')">−</button><button onclick="calcBtn('budgetAmtInput','*')">×</button><button onclick="calcBtn('budgetAmtInput','/')">÷</button><button onclick="calcBtn('budgetAmtInput','C')">C</button><button onclick="calcBtn('budgetAmtInput','⌫')">⌫</button><button class="calc-eq" onclick="calcBtn('budgetAmtInput','=')">=</button></div></div>
     <div class="sheet-acts">
       <button class="btn btn-ghost" style="flex:1;" onclick="closeOv('ovSetBudget')">Batal</button>
       <button class="btn btn-accent" style="flex:2;" onclick="confirmSetBudget()">✅ Simpan Budget</button>
@@ -2289,7 +2382,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
         </select>
       </div>
     </div>
-    <div class="fg"><label>Jumlah (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="recAmt" placeholder="0" inputmode="numeric" oninput="fmtAmt(this)"></div></div>
+    <div class="fg"><label>Jumlah (Rp)</label><div class="amt-wrap"><span class="amt-prefix">Rp</span><input class="amt-input" type="text" id="recAmt" placeholder="0" inputmode="decimal" oninput="fmtAmt(this)"></div><div class="calc-strip"><button onclick="calcBtn('recAmt','+')">+</button><button onclick="calcBtn('recAmt','-')">−</button><button onclick="calcBtn('recAmt','*')">×</button><button onclick="calcBtn('recAmt','/')">÷</button><button onclick="calcBtn('recAmt','C')">C</button><button onclick="calcBtn('recAmt','⌫')">⌫</button><button class="calc-eq" onclick="calcBtn('recAmt','=')">=</button></div></div>
     <div class="row2">
       <div class="fg"><label>Kategori</label><select id="recCat"></select></div>
       <div class="fg"><label>Dompet</label><select id="recWal"></select></div>
