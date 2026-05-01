@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="FinTrack">
-<title>FinTrack v2.0</title>
+<title>FinTrack v1.0</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
@@ -697,8 +697,8 @@ window.toggleAcc=function(id){
   const body=document.getElementById(id);
   const arrow=document.getElementById(id+'Arrow');
   const isOpen=body.classList.contains('open');
-  // close all
-  document.querySelectorAll('.acc-body').forEach(b=>b.classList.remove('open'));
+  // close all settings accordions only (exclude dailySummaryBody)
+  document.querySelectorAll('.acc-body:not(#dailySummaryBody)').forEach(b=>b.classList.remove('open'));
   document.querySelectorAll('.acc-arrow').forEach(a=>a.style.transform='rotate(0deg)');
   if(!isOpen){
     body.classList.add('open');
@@ -895,7 +895,7 @@ async function sendReminderEmailJS(r){
       </td>
     </tr>
   </table>
-  <div style="text-align:center;margin-top:16px;font-size:11px;color:#55556a;">FinTrack v2.0 · Email otomatis dari pengingat Anda</div>
+  <div style="text-align:center;margin-top:16px;font-size:11px;color:#55556a;">FinTrack v1.0 · Email otomatis dari pengingat Anda</div>
 </div>`;
   try{
     await emailjs.send(EJS_SERVICE, EJS_TEMPLATE, {
@@ -979,7 +979,7 @@ async function sendDailySummaryEmailJS(){
   </div>
   ${catRows?`<div style="background:#1e1e2e;border-radius:12px;padding:16px;margin-bottom:12px;"><div style="font-size:11px;color:#55556a;text-transform:uppercase;margin-bottom:10px;">🛍️ Pengeluaran Hari Ini</div><table width="100%" cellpadding="0" cellspacing="0">${catRows}</table></div>`:''}
   ${budgetWarnRows?`<div style="background:rgba(240,98,146,0.08);border:1px solid rgba(240,98,146,0.2);border-radius:12px;padding:16px;margin-bottom:12px;"><div style="font-size:11px;color:#f06292;text-transform:uppercase;margin-bottom:10px;">🎯 Peringatan Budget</div><table width="100%" cellpadding="0" cellspacing="0">${budgetWarnRows}</table></div>`:''}
-  <div style="text-align:center;font-size:11px;color:#55556a;margin-top:8px;">FinTrack v2.0 · Ringkasan otomatis harian</div>
+  <div style="text-align:center;font-size:11px;color:#55556a;margin-top:8px;">FinTrack v1.0 · Ringkasan otomatis harian</div>
 </div>`;
   try{
     await emailjs.send(EJS_SERVICE, EJS_TEMPLATE, {
@@ -1204,9 +1204,39 @@ window.installPWA=function(){
 // ══════════════════════════════════
 //  TOAST
 // ══════════════════════════════════
-// ══════════════════════════════════
-//  EMAIL PREFERENCES
-// ══════════════════════════════════
+window.testEmailJS=async function(){
+  if(!CURRENT_USER){
+    toast('⚠️ Harap login terlebih dahulu','orange');
+    return;
+  }
+  if(!CURRENT_USER.email){
+    toast('⚠️ Email akun tidak ditemukan','orange');
+    return;
+  }
+  toast('📤 Mengirim test email...','green');
+  const name=CURRENT_USER.displayName||'Pengguna';
+  const html=`<div style="font-family:'Segoe UI',Arial,sans-serif;background:#0d0d14;padding:24px;border-radius:16px;max-width:480px;margin:0 auto;text-align:center;">
+    <div style="font-size:40px;margin-bottom:12px;">✅</div>
+    <div style="font-size:22px;font-weight:800;color:#f0f0f8;">Fin<span style="color:#a89cf0;">Track</span></div>
+    <div style="font-size:15px;font-weight:700;color:#f0f0f8;margin-top:10px;">Test Email Berhasil!</div>
+    <div style="font-size:13px;color:#9898b8;margin-top:8px;">Halo <b style="color:#f0f0f8;">${name}</b>, EmailJS sudah terhubung dengan benar ke FinTrack v1.0.</div>
+    <div style="margin-top:16px;font-size:11px;color:#55556a;">FinTrack v1.0 · ${new Date().toLocaleString('id-ID')}</div>
+  </div>`;
+  try{
+    const result = await emailjs.send(EJS_SERVICE, EJS_TEMPLATE, {
+      to_email: CURRENT_USER.email,
+      subject: '✅ Test Email FinTrack — Berhasil!',
+      name,
+      email: CURRENT_USER.email,
+      html_content: html
+    });
+    console.log('EmailJS result:', result);
+    toast(`📧 Test email terkirim ke ${CURRENT_USER.email}!`,'green');
+  }catch(e){
+    console.error('EmailJS error:', e);
+    toast(`❌ Gagal: ${e.text||e.message||JSON.stringify(e)}`,'red');
+  }
+};
 function loadEmailPrefs(){
   if(!CURRENT_USER) return;
   const rKey='ft_emailReminder_'+CURRENT_USER.uid;
@@ -1732,8 +1762,8 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .acc-row{cursor:pointer;user-select:none;}
 .acc-row:active{background:var(--bg3);}
 .acc-arrow{font-size:14px;color:var(--text3);transition:transform .25s;flex-shrink:0;}
-.acc-body{max-height:0;overflow:hidden;transition:max-height .35s ease,padding .25s;}
-.acc-body.open{max-height:600px;padding:0 0 4px;}
+.acc-body{max-height:0;overflow:hidden;transition:max-height .4s ease,padding .25s;}
+.acc-body.open{max-height:1200px;padding:0 0 4px;}
 .cat-dropdown-list{padding:8px 16px 4px;}
 .cat-list-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);}
 .cat-list-item:last-child{border-bottom:none;}
@@ -1781,7 +1811,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .spinner{width:40px;height:40px;border:3px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 
-/* ── v2.0 NEW STYLES ── */
+/* ── v1.0 NEW STYLES ── */
 
 /* DAILY SUMMARY */
 .daily-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:4px;}
@@ -2010,44 +2040,66 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
   <!-- SETTINGS -->
   <div class="page" id="pg-settings">
 
-    <!-- Budget Limit per Kategori -->
+    <!-- Budget Limit per Kategori (accordion/dropdown) -->
     <div class="setting-group">
-      <div class="setting-row"><div><div class="setting-label">🎯 Budget per Kategori</div><div class="setting-sub">Atur batas pengeluaran bulanan</div></div></div>
-      <div id="budgetItems" style="padding:0 16px 12px;"></div>
+      <div class="setting-row acc-row" onclick="toggleAcc('accBudget')">
+        <div><div class="setting-label">🎯 Budget per Kategori</div><div class="setting-sub">Atur batas pengeluaran bulanan</div></div>
+        <span class="acc-arrow" id="accBudgetArrow">▾</span>
+      </div>
+      <div class="acc-body" id="accBudget">
+        <div id="budgetItems" style="padding:0 0 8px;"></div>
+      </div>
     </div>
 
-    <!-- Transaksi Berulang -->
+    <!-- Transaksi Berulang (accordion/dropdown) -->
     <div class="setting-group">
-      <div class="setting-row"><div><div class="setting-label">🔁 Transaksi Berulang</div><div class="setting-sub">Otomatis dieksekusi saat jatuh tempo</div></div><button class="btn btn-sm btn-accent" onclick="showAddRecurring()">+ Tambah</button></div>
-      <div id="recurringItems"></div>
+      <div class="setting-row acc-row" onclick="toggleAcc('accRecurring')">
+        <div><div class="setting-label">🔁 Transaksi Berulang</div><div class="setting-sub">Otomatis dieksekusi saat jatuh tempo</div></div>
+        <span class="acc-arrow" id="accRecurringArrow">▾</span>
+      </div>
+      <div class="acc-body" id="accRecurring">
+        <div style="padding:10px 16px 6px;">
+          <button class="btn btn-sm btn-accent" onclick="showAddRecurring();event.stopPropagation()">+ Tambah Transaksi</button>
+        </div>
+        <div id="recurringItems"></div>
+      </div>
     </div>
 
-    <!-- Pengingat Harian -->
+    <!-- Pengingat & Email — SATU DROPDOWN -->
     <div class="setting-group">
-      <div class="setting-row"><div><div class="setting-label">⏰ Pengingat Harian</div><div class="setting-sub">Notifikasi mencatat transaksi</div></div><button class="btn btn-sm btn-accent" onclick="showAddRem()">+ Tambah</button></div>
-      <div id="notifStatus" style="padding:10px 16px;font-size:12px;color:var(--text3);border-bottom:1px solid var(--border);"></div>
-      <button id="notifPermBtn" class="btn btn-sm btn-ghost" style="margin:10px 16px;display:none;" onclick="reqNotif()">🔔 Izinkan Notifikasi</button>
-      <div id="remItems"></div>
-    </div>
-
-    <!-- Email Notifikasi -->
-    <div class="setting-group">
-      <div class="setting-row"><div><div class="setting-label">📧 Notifikasi via Email</div><div class="setting-sub">Kirim email saat reminder & ringkasan harian</div></div></div>
-      <div style="padding:0 16px 14px;">
-        <div class="setting-row" style="padding:10px 0;border-bottom:1px solid var(--border);">
-          <div><div style="font-size:13px;font-weight:600;color:var(--text);">📬 Email Reminder</div><div style="font-size:11px;color:var(--text3);margin-top:2px;">Email dikirim saat jam reminder aktif</div></div>
-          <div class="toggle" id="toggleEmailReminder" onclick="toggleEmailPref('reminder')"></div>
+      <div class="setting-row acc-row" onclick="toggleAcc('accPengingat')">
+        <div><div class="setting-label">⏰ Pengingat & Notifikasi</div><div class="setting-sub">Reminder harian & email otomatis</div></div>
+        <span class="acc-arrow" id="accPengingatArrow">▾</span>
+      </div>
+      <div class="acc-body" id="accPengingat">
+        <!-- Notifikasi Browser -->
+        <div style="padding:10px 16px 0;">
+          <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">🔔 Notifikasi Browser</div>
+          <div id="notifStatus" style="font-size:12px;color:var(--text3);margin-bottom:8px;"></div>
+          <button id="notifPermBtn" class="btn btn-sm btn-ghost" style="display:none;margin-bottom:10px;" onclick="reqNotif()">🔔 Izinkan Notifikasi</button>
         </div>
-        <div class="setting-row" style="padding:10px 0;">
-          <div><div style="font-size:13px;font-weight:600;color:var(--text);">📊 Ringkasan Harian (20:00)</div><div style="font-size:11px;color:var(--text3);margin-top:2px;">Email otomatis jam 20:00 WIB setiap hari</div></div>
-          <div class="toggle" id="toggleEmailSummary" onclick="toggleEmailPref('summary')"></div>
+        <div style="padding:0 16px 6px;">
+          <button class="btn btn-sm btn-accent" onclick="showAddRem();event.stopPropagation()">+ Tambah Pengingat</button>
         </div>
-        <div style="background:var(--bg3);border-radius:var(--r-sm);padding:10px 12px;margin-top:8px;font-size:11px;color:var(--text3);line-height:1.7;">
-          📧 Email dikirim via <b style="color:var(--accent-light);">EmailJS</b> langsung dari browser.<br>
-          ⚠️ Tab FinTrack harus <b style="color:var(--text2);">terbuka</b> agar email terkirim tepat waktu.
-        </div>
-        <div style="margin-top:10px;">
-          <button class="btn btn-sm btn-ghost" onclick="sendDailySummaryEmailJS()">📤 Kirim Test Email Sekarang</button>
+        <div id="remItems"></div>
+        <!-- Divider -->
+        <div style="height:1px;background:var(--border);margin:4px 0;"></div>
+        <!-- Email Notifikasi -->
+        <div style="padding:10px 16px 14px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">📧 Notifikasi Email (EmailJS)</div>
+          <div class="setting-row" style="padding:8px 0;border-bottom:1px solid var(--border);">
+            <div><div style="font-size:13px;font-weight:600;color:var(--text);">📬 Email Reminder</div><div style="font-size:11px;color:var(--text3);margin-top:2px;">Dikirim saat jam pengingat aktif</div></div>
+            <div class="toggle" id="toggleEmailReminder" onclick="toggleEmailPref('reminder')"></div>
+          </div>
+          <div class="setting-row" style="padding:8px 0;">
+            <div><div style="font-size:13px;font-weight:600;color:var(--text);">📊 Ringkasan Harian (20:00)</div><div style="font-size:11px;color:var(--text3);margin-top:2px;">Email otomatis setiap hari jam 20:00</div></div>
+            <div class="toggle" id="toggleEmailSummary" onclick="toggleEmailPref('summary')"></div>
+          </div>
+          <div style="background:var(--bg3);border-radius:var(--r-sm);padding:10px 12px;margin-top:10px;font-size:11px;color:var(--text3);line-height:1.7;">
+            📧 Email via <b style="color:var(--accent-light);">EmailJS</b> langsung dari browser.<br>
+            ⚠️ Tab FinTrack harus <b style="color:var(--text2);">terbuka</b> agar email terkirim.
+          </div>
+          <button class="btn btn-sm btn-ghost" style="margin-top:10px;width:100%;" onclick="testEmailJS()">📤 Kirim Test Email Sekarang</button>
         </div>
       </div>
     </div>
