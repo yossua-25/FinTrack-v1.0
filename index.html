@@ -10,6 +10,7 @@
 <title>FinTrack v2.0</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <!-- Firebase -->
 <script type="module">
@@ -84,8 +85,17 @@ function getCatIcon(name){ const all=[...DEFAULT_CATS.income,...DEFAULT_CATS.exp
 const W_ICON={Bank:'🏦',Tunai:'💵','E-Wallet':'📱',Tabungan:'🏛️',Investasi:'📈'};
 
 // ══════════════════════════════════
-//  FIRESTORE PATHS
+//  EMAILJS CONFIG
 // ══════════════════════════════════
+const EJS_SERVICE  = 'service_5ho5e3v';
+const EJS_TEMPLATE = 'template_7kbygsq';
+const EJS_PUBKEY   = 'HVp4U7NEIa_A6Xx1R';
+emailjs.init(EJS_PUBKEY);
+
+async function saveEmailPrefs(prefs){
+  if(!CURRENT_USER) return;
+  await setDoc(doc(db,`users/${CURRENT_USER.uid}/settings/emailPrefs`), prefs, {merge:true});
+}
 function uCol(col){ return collection(db,`users/${CURRENT_USER.uid}/${col}`); }
 function uDoc(col,id){ return doc(db,`users/${CURRENT_USER.uid}/${col}/${id}`); }
 
@@ -348,7 +358,7 @@ window.goPage = function(id){
   if(id==='history'){fillFilters();renderTable();}
   if(id==='dompet')  renderWals();
   if(id==='laporan'){fillRepMonths();renderReport();}
-  if(id==='settings'){renderRems();renderRollHist();updNotifStatus();renderCats();renderBudgets();renderRecurring();}
+  if(id==='settings'){renderRems();renderRollHist();updNotifStatus();renderCats();renderBudgets();renderRecurring();loadEmailPrefs();}
   if(id==='profil'){renderProfil();}
   window.scrollTo(0,0);
 };
@@ -845,6 +855,145 @@ function fireNotif(r){
   }
   // Always show in-app alert bar regardless
   showInAppAlert(r.label);
+
+  // Kirim email via EmailJS
+  sendReminderEmailJS(r);
+}
+
+async function sendReminderEmailJS(r){
+  if(!CURRENT_USER) return;
+  const prefsKey='ft_emailReminder_'+CURRENT_USER.uid;
+  if(localStorage.getItem(prefsKey)==='false') return;
+  const todayStr=today();
+  const todayTxs=TXS.filter(t=>t.date===todayStr);
+  const todayExp=todayTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const totalBal=WALS.reduce((s,w)=>s+w.balance,0);
+  const txCount=todayTxs.length;
+  const name=CURRENT_USER.displayName||'Pengguna';
+  const html=`<div style="font-family:'Segoe UI',Arial,sans-serif;background:#0d0d14;padding:24px;border-radius:16px;max-width:480px;margin:0 auto;">
+  <div style="text-align:center;margin-bottom:20px;">
+    <div style="font-size:40px;margin-bottom:8px;">⏰</div>
+    <div style="font-size:22px;font-weight:800;color:#f0f0f8;">Fin<span style="color:#a89cf0;">Track</span></div>
+    <div style="font-size:15px;font-weight:700;color:#f0f0f8;margin-top:8px;">${r.label}</div>
+    <div style="font-size:13px;color:#9898b8;margin-top:4px;">Halo <b style="color:#f0f0f8;">${name}</b>, jangan lupa catat transaksi hari ini!</div>
+  </div>
+  <table width="100%" cellpadding="0" cellspacing="8">
+    <tr>
+      <td style="background:#1a1a28;border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:10px;color:#55556a;margin-bottom:4px;">TOTAL DOMPET</div>
+        <div style="font-size:15px;font-weight:700;color:#a89cf0;">${fmt(totalBal)}</div>
+      </td>
+      <td width="8"></td>
+      <td style="background:#1a1a28;border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:10px;color:#55556a;margin-bottom:4px;">KELUAR HARI INI</div>
+        <div style="font-size:15px;font-weight:700;color:#f06292;">${fmt(todayExp)}</div>
+      </td>
+      <td width="8"></td>
+      <td style="background:#1a1a28;border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:10px;color:#55556a;margin-bottom:4px;">TRANSAKSI</div>
+        <div style="font-size:15px;font-weight:700;color:#3dd68c;">${txCount} tx</div>
+      </td>
+    </tr>
+  </table>
+  <div style="text-align:center;margin-top:16px;font-size:11px;color:#55556a;">FinTrack v2.0 · Email otomatis dari pengingat Anda</div>
+</div>`;
+  try{
+    await emailjs.send(EJS_SERVICE, EJS_TEMPLATE, {
+      to_email: CURRENT_USER.email,
+      subject: `⏰ ${r.label} — FinTrack`,
+      name,
+      email: CURRENT_USER.email,
+      html_content: html
+    });
+    console.log('📧 Reminder email sent via EmailJS');
+  }catch(e){
+    console.warn('EmailJS reminder failed:',e);
+  }
+}
+
+async function sendDailySummaryEmailJS(){
+  if(!CURRENT_USER) return;
+  const prefsKey='ft_emailSummary_'+CURRENT_USER.uid;
+  if(localStorage.getItem(prefsKey)==='false') return;
+  const todayStr=today();
+  const monthStr=todayStr.slice(0,7);
+  const todayTxs=TXS.filter(t=>t.date===todayStr);
+  const monthTxs=TXS.filter(t=>t.date.startsWith(monthStr));
+  const todayInc=todayTxs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const todayExp=todayTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const monthInc=monthTxs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const monthExp=monthTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const totalBal=WALS.reduce((s,w)=>s+w.balance,0);
+  const name=CURRENT_USER.displayName||'Pengguna';
+  // Category breakdown
+  const catMap={};
+  todayTxs.filter(t=>t.type==='expense').forEach(t=>{catMap[t.category]=(catMap[t.category]||0)+t.amount;});
+  const catRows=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>
+    `<tr><td style="padding:6px 0;color:#9898b8;font-size:13px;">${getCatIcon(cat)} ${cat}</td><td style="padding:6px 0;text-align:right;color:#f06292;font-weight:600;font-size:13px;">${fmt(amt)}</td></tr>`
+  ).join('');
+  // Budget warnings
+  const curMonth=mstr(new Date());
+  const budgetWarnRows=Object.entries(BUDGETS).map(([catName,bgt])=>{
+    const spent=monthTxs.filter(t=>t.type==='expense'&&t.category===catName).reduce((s,t)=>s+t.amount,0);
+    const pct=Math.round(spent/bgt.amount*100);
+    if(pct<80) return '';
+    return `<tr><td style="padding:6px 0;color:#9898b8;font-size:13px;">${catName}</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:13px;color:${pct>=100?'#f06292':'#fb923c'};">${pct}% (${fmt(spent)}/${fmt(bgt.amount)})</td></tr>`;
+  }).join('');
+  const dateLabel=new Date(todayStr+'T00:00:00').toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const html=`<div style="font-family:'Segoe UI',Arial,sans-serif;background:#0d0d14;padding:24px;border-radius:16px;max-width:520px;margin:0 auto;">
+  <div style="margin-bottom:16px;">
+    <div style="font-size:22px;font-weight:800;color:#f0f0f8;">Fin<span style="color:#a89cf0;">Track</span> <span style="font-size:11px;background:#7c6fe0;color:white;border-radius:6px;padding:2px 7px;">v2</span></div>
+    <div style="font-size:13px;color:#9898b8;margin-top:4px;">📆 ${dateLabel}</div>
+    <div style="font-size:13px;color:#9898b8;">Halo <b style="color:#f0f0f8;">${name}</b> 👋</div>
+  </div>
+  <div style="background:#1e1e2e;border-radius:12px;padding:16px;margin-bottom:12px;">
+    <div style="font-size:11px;color:#55556a;text-transform:uppercase;margin-bottom:6px;">Total Semua Dompet</div>
+    <div style="font-size:28px;font-weight:800;color:#f0f0f8;">${fmt(totalBal)}</div>
+  </div>
+  <table width="100%" cellpadding="0" cellspacing="8" style="margin-bottom:12px;">
+    <tr>
+      <td style="background:#1a1a28;border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:10px;color:#55556a;margin-bottom:4px;">MASUK HARI INI</div>
+        <div style="font-size:14px;font-weight:700;color:#3dd68c;">${fmt(todayInc)}</div>
+      </td>
+      <td width="8"></td>
+      <td style="background:#1a1a28;border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:10px;color:#55556a;margin-bottom:4px;">KELUAR HARI INI</div>
+        <div style="font-size:14px;font-weight:700;color:#f06292;">${fmt(todayExp)}</div>
+      </td>
+      <td width="8"></td>
+      <td style="background:#1a1a28;border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:10px;color:#55556a;margin-bottom:4px;">BERSIH</div>
+        <div style="font-size:14px;font-weight:700;color:${todayInc-todayExp>=0?'#a89cf0':'#f06292'};">${fmt(todayInc-todayExp)}</div>
+      </td>
+    </tr>
+  </table>
+  <div style="background:#1e1e2e;border-radius:12px;padding:16px;margin-bottom:12px;">
+    <div style="font-size:11px;color:#55556a;text-transform:uppercase;margin-bottom:10px;">📅 Bulan Ini</div>
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr><td style="color:#9898b8;font-size:13px;padding:4px 0;">Pemasukan</td><td style="text-align:right;color:#3dd68c;font-size:13px;font-weight:700;">${fmt(monthInc)}</td></tr>
+      <tr><td style="color:#9898b8;font-size:13px;padding:4px 0;">Pengeluaran</td><td style="text-align:right;color:#f06292;font-size:13px;font-weight:700;">${fmt(monthExp)}</td></tr>
+      <tr><td colspan="2" style="padding:6px 0;"><div style="height:1px;background:rgba(255,255,255,0.07);"></div></td></tr>
+      <tr><td style="color:#f0f0f8;font-size:13px;font-weight:700;padding:4px 0;">Saldo Bersih</td><td style="text-align:right;font-size:14px;font-weight:800;color:${monthInc-monthExp>=0?'#a89cf0':'#f06292'};">${fmt(monthInc-monthExp)}</td></tr>
+    </table>
+  </div>
+  ${catRows?`<div style="background:#1e1e2e;border-radius:12px;padding:16px;margin-bottom:12px;"><div style="font-size:11px;color:#55556a;text-transform:uppercase;margin-bottom:10px;">🛍️ Pengeluaran Hari Ini</div><table width="100%" cellpadding="0" cellspacing="0">${catRows}</table></div>`:''}
+  ${budgetWarnRows?`<div style="background:rgba(240,98,146,0.08);border:1px solid rgba(240,98,146,0.2);border-radius:12px;padding:16px;margin-bottom:12px;"><div style="font-size:11px;color:#f06292;text-transform:uppercase;margin-bottom:10px;">🎯 Peringatan Budget</div><table width="100%" cellpadding="0" cellspacing="0">${budgetWarnRows}</table></div>`:''}
+  <div style="text-align:center;font-size:11px;color:#55556a;margin-top:8px;">FinTrack v2.0 · Ringkasan otomatis harian</div>
+</div>`;
+  try{
+    await emailjs.send(EJS_SERVICE, EJS_TEMPLATE, {
+      to_email: CURRENT_USER.email,
+      subject: `📆 Ringkasan Keuangan — ${new Date().toLocaleDateString('id-ID',{day:'numeric',month:'long'})}`,
+      name,
+      email: CURRENT_USER.email,
+      html_content: html
+    });
+    toast('📧 Email ringkasan harian terkirim!','green');
+  }catch(e){
+    console.warn('EmailJS daily summary failed:',e);
+    toast('❌ Gagal kirim email ringkasan','red');
+  }
 }
 
 function showInAppAlert(msg){
@@ -875,6 +1024,20 @@ function schedAllRems(){
   // Cancel all existing timers first
   Object.keys(REM_TIMERS).forEach(k=>{ clearTimeout(REM_TIMERS[k]); delete REM_TIMERS[k]; });
   REMS.filter(r=>r.active).forEach(r=>schedRem(r));
+  // Jadwalkan email ringkasan harian jam 20:00
+  schedDailySummaryEmail();
+}
+
+function schedDailySummaryEmail(){
+  if(REM_TIMERS['__daily_summary']) { clearTimeout(REM_TIMERS['__daily_summary']); }
+  const now=new Date();
+  let next=new Date(now.getFullYear(),now.getMonth(),now.getDate(),20,0,0);
+  if(next<=now) next.setDate(next.getDate()+1);
+  const delay=next-now;
+  REM_TIMERS['__daily_summary']=setTimeout(()=>{
+    sendDailySummaryEmailJS();
+    schedDailySummaryEmail(); // jadwalkan ulang untuk besok
+  }, delay);
 }
 
 // ══════════════════════════════════
@@ -1041,6 +1204,37 @@ window.installPWA=function(){
 // ══════════════════════════════════
 //  TOAST
 // ══════════════════════════════════
+// ══════════════════════════════════
+//  EMAIL PREFERENCES
+// ══════════════════════════════════
+function loadEmailPrefs(){
+  if(!CURRENT_USER) return;
+  const rKey='ft_emailReminder_'+CURRENT_USER.uid;
+  const sKey='ft_emailSummary_'+CURRENT_USER.uid;
+  const rOn=localStorage.getItem(rKey)!=='false';
+  const sOn=localStorage.getItem(sKey)!=='false';
+  const rEl=document.getElementById('toggleEmailReminder');
+  const sEl=document.getElementById('toggleEmailSummary');
+  if(rEl) rEl.classList.toggle('on', rOn);
+  if(sEl) sEl.classList.toggle('on', sOn);
+}
+
+window.toggleEmailPref=async function(type){
+  if(!CURRENT_USER) return;
+  const key='ft_email'+(type==='reminder'?'Reminder':'Summary')+'_'+CURRENT_USER.uid;
+  const cur=localStorage.getItem(key)!=='false';
+  const next=!cur;
+  localStorage.setItem(key, next?'true':'false');
+  loadEmailPrefs();
+  // Simpan juga ke Firestore supaya Cloud Function baca
+  if(type==='summary'){
+    await saveEmailPrefs({dailySummary: next});
+    toast(next?'📊 Ringkasan harian email aktif':'📊 Ringkasan harian email nonaktif', next?'green':'orange');
+  } else {
+    toast(next?'📬 Email reminder aktif':'📬 Email reminder nonaktif', next?'green':'orange');
+  }
+};
+
 window.toast=function(msg,type='green'){
   const e=document.createElement('div');e.className='toast';e.textContent=msg;
   const c={green:'var(--green)',red:'var(--red)',orange:'var(--orange)'};
@@ -1834,6 +2028,28 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
       <div id="notifStatus" style="padding:10px 16px;font-size:12px;color:var(--text3);border-bottom:1px solid var(--border);"></div>
       <button id="notifPermBtn" class="btn btn-sm btn-ghost" style="margin:10px 16px;display:none;" onclick="reqNotif()">🔔 Izinkan Notifikasi</button>
       <div id="remItems"></div>
+    </div>
+
+    <!-- Email Notifikasi -->
+    <div class="setting-group">
+      <div class="setting-row"><div><div class="setting-label">📧 Notifikasi via Email</div><div class="setting-sub">Kirim email saat reminder & ringkasan harian</div></div></div>
+      <div style="padding:0 16px 14px;">
+        <div class="setting-row" style="padding:10px 0;border-bottom:1px solid var(--border);">
+          <div><div style="font-size:13px;font-weight:600;color:var(--text);">📬 Email Reminder</div><div style="font-size:11px;color:var(--text3);margin-top:2px;">Email dikirim saat jam reminder aktif</div></div>
+          <div class="toggle" id="toggleEmailReminder" onclick="toggleEmailPref('reminder')"></div>
+        </div>
+        <div class="setting-row" style="padding:10px 0;">
+          <div><div style="font-size:13px;font-weight:600;color:var(--text);">📊 Ringkasan Harian (20:00)</div><div style="font-size:11px;color:var(--text3);margin-top:2px;">Email otomatis jam 20:00 WIB setiap hari</div></div>
+          <div class="toggle" id="toggleEmailSummary" onclick="toggleEmailPref('summary')"></div>
+        </div>
+        <div style="background:var(--bg3);border-radius:var(--r-sm);padding:10px 12px;margin-top:8px;font-size:11px;color:var(--text3);line-height:1.7;">
+          📧 Email dikirim via <b style="color:var(--accent-light);">EmailJS</b> langsung dari browser.<br>
+          ⚠️ Tab FinTrack harus <b style="color:var(--text2);">terbuka</b> agar email terkirim tepat waktu.
+        </div>
+        <div style="margin-top:10px;">
+          <button class="btn btn-sm btn-ghost" onclick="sendDailySummaryEmailJS()">📤 Kirim Test Email Sekarang</button>
+        </div>
+      </div>
     </div>
 
     <!-- Carry Forward -->
