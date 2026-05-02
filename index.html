@@ -358,7 +358,8 @@ function setSyncStatus(s){
 window.goPage = function(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.bnav-btn').forEach(b=>b.classList.remove('on'));
-  document.getElementById('pg-'+id).classList.add('active');
+  const pg=document.getElementById('pg-'+id);
+  if(pg){ pg.classList.add('active'); pg.scrollTop=0; }
   const btn=document.querySelector(`.bnav-btn[data-pg="${id}"]`);
   if(btn) btn.classList.add('on');
   if(id==='home')    { refreshHome(); renderDailySummary(); }
@@ -367,7 +368,6 @@ window.goPage = function(id){
   if(id==='laporan'){fillRepMonths();renderReport();}
   if(id==='settings'){renderRems();renderRollHist();updNotifStatus();renderCats();renderBudgets();renderRecurring();loadEmailPrefs();}
   if(id==='profil'){renderProfil();}
-  window.scrollTo(0,0);
 };
 
 // ══════════════════════════════════
@@ -848,7 +848,12 @@ function renderTable(){
   for(let i=1;i<=total;i++) pag.innerHTML+=`<div class="pg ${i===CUR_PAGE?'on':''}" onclick="goTxPage(${i})">${i}</div>`;
 }
 
-window.goTxPage=function(p){CUR_PAGE=p;renderTable();window.scrollTo(0,0);};
+window.goTxPage=function(p){
+  CUR_PAGE=p;
+  renderTable();
+  const pg=document.getElementById('pg-history');
+  if(pg) pg.scrollTop=0;
+};
 
 function allIncCats(){ return [...DEFAULT_CATS.income, ...CATS.income]; }
 function allExpCats(){ return [...DEFAULT_CATS.expense, ...CATS.expense]; }
@@ -1877,7 +1882,7 @@ body.light .sheet{background:var(--bg2);}
 
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 html{height:100%;}
-body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;font-size:14px;padding-bottom:calc(80px + env(safe-area-inset-bottom,0px));}
+body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow:hidden;font-size:14px;}
 
 /* LOGIN SCREEN */
 #loginScreen{display:flex;position:fixed;inset:0;z-index:999;flex-direction:column;align-items:center;justify-content:center;background:var(--bg);padding:32px;}
@@ -1917,8 +1922,17 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .user-name{font-size:12px;font-weight:600;color:var(--text2);max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
 /* PAGES */
-#appShell{display:flex;flex-direction:column;min-height:100vh;}
-.page{display:none;padding:16px 16px 100px;overflow-x:hidden;}
+#appShell{position:fixed;inset:0;display:flex;flex-direction:column;overflow:hidden;}
+.pages-wrap{flex:1;position:relative;overflow:hidden;}
+.page{
+  display:none;
+  position:absolute;
+  inset:0;
+  overflow-y:auto;
+  overflow-x:hidden;
+  padding:16px 16px calc(80px + env(safe-area-inset-bottom,0px));
+  -webkit-overflow-scrolling:touch;
+}
 .page.active{display:block;}
 
 /* BOTTOM NAV */
@@ -2108,7 +2122,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .inapp-notif{position:fixed;top:calc(70px + env(safe-area-inset-top,0px));left:16px;right:16px;z-index:9999;background:linear-gradient(135deg,var(--card2),var(--bg3));border:1px solid rgba(124,111,224,0.4);border-left:3px solid var(--accent);border-radius:var(--r-sm);padding:14px 16px;font-size:13px;font-weight:500;box-shadow:0 8px 30px rgba(0,0,0,.5);display:flex;align-items:center;gap:10px;animation:toast-in .3s ease;transition:opacity .4s,transform .4s;}
 
 /* TOAST */
-.toast{position:fixed;bottom:calc(80px + var(--safe-b));left:16px;right:16px;z-index:9999;background:var(--card2);border-radius:var(--r-sm);padding:12px 16px;font-size:13px;font-weight:500;box-shadow:0 8px 30px rgba(0,0,0,.5);border-left:3px solid var(--green);animation:toast-in .25s ease;transition:opacity .3s,transform .3s;}
+.toast{position:fixed;bottom:calc(74px + env(safe-area-inset-bottom,0px));left:16px;right:16px;z-index:9999;background:var(--card2);border-radius:var(--r-sm);padding:12px 16px;font-size:13px;font-weight:500;box-shadow:0 8px 30px rgba(0,0,0,.5);border-left:3px solid var(--green);animation:toast-in .25s ease;transition:opacity .3s,transform .3s;}
 @keyframes toast-in{from{transform:translateY(10px);opacity:0;}to{transform:translateY(0);opacity:1;}}
 
 /* PROFIL PAGE */
@@ -2201,6 +2215,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
   </div>
 
   <!-- PAGES -->
+  <div class="pages-wrap">
 
   <!-- HOME -->
   <div class="page active" id="pg-home">
@@ -2509,6 +2524,8 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
       <div style="padding:10px 16px 14px;font-size:12px;color:var(--text3);line-height:1.7;">📱 <b style="color:var(--text2)">Android:</b> Chrome → ⋮ → Tambahkan ke layar utama<br>🍎 <b style="color:var(--text2)">iPhone:</b> Safari → Share 📤 → Add to Home Screen</div>
     </div>
   </div>
+
+  </div><!-- /pages-wrap -->
 
   <!-- BOTTOM NAV -->
   <div class="bnav">
