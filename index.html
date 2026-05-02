@@ -65,6 +65,7 @@ const DEFAULT_CATS = {
     {id:'c_didik',  name:'Pendidikan',  icon:'📚', locked:true},
     {id:'c_hiburan',name:'Hiburan',     icon:'🎮', locked:true},
     {id:'c_tabung', name:'Tabungan',    icon:'🏦', locked:true},
+    {id:'c_pajak',  name:'Pajak',       icon:'🏛️', locked:true},
     {id:'c_exp_l',  name:'Lainnya',     icon:'✨', locked:true},
   ]
 };
@@ -286,6 +287,9 @@ function setBtnLoading(id,on){
   el.textContent=on?'Memuat...':'Login dengan Google';
 }
 
+// Terapkan tema segera (sebelum login) agar tidak flicker
+initTheme();
+
 onAuthStateChanged(auth, async user=>{
   if(user){
     CURRENT_USER=user;
@@ -303,7 +307,10 @@ onAuthStateChanged(auth, async user=>{
     }
     checkRollover();
     // Proses transaksi berulang yg jatuh tempo (delay kecil supaya listeners sudah aktif)
-    setTimeout(()=>processRecurring(), 2000);
+    setTimeout(()=>{
+      processRecurring();
+      processInterest();
+    }, 2500);
   } else {
     CURRENT_USER=null;
     stopListeners();
@@ -548,8 +555,13 @@ function renderWals(){
   if(!WALS.length){el.innerHTML='<div class="empty"><div class="empty-ico">👛</div>Belum ada dompet</div>';return;}
   el.innerHTML=WALS.map(w=>{
     const rate=w.interestRate||0;
+    const dailyInterest=rate>0?Math.round(w.balance*(rate/100/365)):0;
     const monthlyInterest=rate>0?Math.round(w.balance*(rate/100/12)):0;
-    const interestBadge=rate>0?`<div class="wal-interest-badge">📈 ${rate}%/thn · +${fmt(monthlyInterest)}/bln</div>`:'';
+    const kenaJak=w.balance>7_500_000;
+    const netDaily=kenaJak?Math.round(dailyInterest*0.8):dailyInterest;
+    const netMonthly=kenaJak?Math.round(monthlyInterest*0.8):monthlyInterest;
+    const taxBadge=kenaJak&&rate>0?`<div style="font-size:11px;color:var(--orange);margin-top:3px;">🏛️ Kena pajak bunga 20% (saldo >Rp 7,5jt)</div>`:'';
+    const interestBadge=rate>0?`<div class="wal-interest-badge">📈 ${rate}%/thn · ${kenaJak?`<span style="text-decoration:line-through;opacity:.5;">+${fmt(dailyInterest)}</span> `:''}<b>+${fmt(netDaily)}</b>/hari · <b>+${fmt(netMonthly)}</b>/bln${kenaJak?' (setelah pajak)':''}</div>${taxBadge}`:'';
     return `
     <div class="wallet-card-full">
       <div class="wallet-icon-big">${W_ICON[w.type]||'💰'}</div>
@@ -1750,11 +1762,119 @@ window.toggleDailySummary=function(){
   if(arrow) arrow.style.transform=isOpen?'rotate(0deg)':'rotate(180deg)';
 };
 
+// ══════════════════════════════════
+//  TEMA TERANG / GELAP
+// ══════════════════════════════════
+function initTheme(){
+  const saved=localStorage.getItem('ft_theme')||'dark';
+  applyTheme(saved);
+}
 
+function applyTheme(theme){
+  if(theme==='light'){
+    document.body.classList.add('light');
+    const btn=document.getElementById('themeToggleBtn');
+    if(btn) btn.textContent='☀️';
+  } else {
+    document.body.classList.remove('light');
+    const btn=document.getElementById('themeToggleBtn');
+    if(btn) btn.textContent='🌙';
+  }
+  localStorage.setItem('ft_theme', theme);
+}
+
+window.toggleTheme=function(){
+  const isLight=document.body.classList.contains('light');
+  applyTheme(isLight?'dark':'light');
+  toast(isLight?'🌙 Mode Gelap aktif':'☀️ Mode Terang aktif','green');
+};
+
+// ══════════════════════════════════
+//  BUNGA HARIAN OTOMATIS
+//  Jalankan sekali per hari saat login
+// ══════════════════════════════════
+async function processInterest(){
+  if(!CURRENT_USER||!WALS.length) return;
+  const todayStr=today();
+  const lastKey='ft_lastInterest_'+CURRENT_USER.uid;
+  const lastRun=localStorage.getItem(lastKey);
+  if(lastRun===todayStr) return; // sudah dijalankan hari ini
+
+  const TAX_THRESHOLD = 7_500_000;  // 7.5 juta
+  const TAX_RATE      = 0.20;       // 20%
+
+  const walletsWithInterest=WALS.filter(w=>w.interestRate&&w.interestRate>0);
+  if(!walletsWithInterest.length) return;
+
+  let totalInterest=0, totalTax=0;
+  for(const w of walletsWithInterest){
+    // Bunga harian = saldo × (rate% / 365)
+    const dailyRate=w.interestRate/100/365;
+    const grossInterest=Math.round(w.balance*dailyRate);
+    if(grossInterest<=0) continue;
+
+    // Cek apakah saldo dompet > 7.5jt → kena pajak 20%
+    const kenaJak = w.balance > TAX_THRESHOLD;
+    const taxAmount = kenaJak ? Math.round(grossInterest * TAX_RATE) : 0;
+    const netInterest = grossInterest - taxAmount;
+
+    // Tambah saldo dompet (hanya bunga bersih)
+    w.balance += netInterest;
+    await saveWal(w);
+
+    // Catat transaksi bunga (pemasukan)
+    const txIncome={
+      id:uid(), type:'income', amount:grossInterest,
+      category:'Investasi', walletId:w.id, walletName:w.name,
+      note:`Bunga harian ${w.interestRate}%/thn — ${w.name}${kenaJak?' (sebelum pajak)':''}`,
+      date:todayStr, createdAt:Date.now(), isInterest:true
+    };
+    await saveTx(txIncome);
+
+    // Jika kena pajak, catat transaksi pajak (pengeluaran)
+    if(taxAmount>0){
+      const txTax={
+        id:uid(), type:'expense', amount:taxAmount,
+        category:'Pajak', walletId:w.id, walletName:w.name,
+        note:`Pajak bunga 20% (saldo>${fmt(TAX_THRESHOLD)}) — ${w.name}`,
+        date:todayStr, createdAt:Date.now(), isTax:true
+      };
+      // Kurangi saldo dompet (pajak)
+      w.balance -= taxAmount;
+      await saveWal(w);
+      await saveTx(txTax);
+    }
+
+    totalInterest+=grossInterest;
+    totalTax+=taxAmount;
+  }
+
+  localStorage.setItem(lastKey, todayStr);
+
+  if(totalInterest>0){
+    if(totalTax>0){
+      toast(`📈 Bunga +${fmt(totalInterest)} | 🏛️ Pajak 20% -${fmt(totalTax)} | Bersih +${fmt(totalInterest-totalTax)}`,'orange');
+    } else {
+      toast(`📈 Bunga harian +${fmt(totalInterest)} ditambahkan!`,'green');
+    }
+  }
+}
 
 </script>
 <style>
 :root{--bg:#0d0d14;--bg2:#13131e;--bg3:#1a1a28;--card:#1e1e2e;--card2:#252538;--border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);--accent:#7c6fe0;--accent-light:#a89cf0;--green:#3dd68c;--green-dim:rgba(61,214,140,0.12);--red:#f06292;--red-dim:rgba(240,98,146,0.12);--yellow:#fbbf24;--orange:#fb923c;--orange-dim:rgba(251,146,60,0.12);--text:#f0f0f8;--text2:#9898b8;--text3:#55556a;--safe-t:env(safe-area-inset-top,0px);--safe-b:env(safe-area-inset-bottom,0px);--r:16px;--r-sm:10px;}
+
+/* ── LIGHT MODE ── */
+body.light{--bg:#f0f2f8;--bg2:#e8eaf2;--bg3:#dde0ee;--card:#ffffff;--card2:#f4f5fb;--border:rgba(0,0,0,0.08);--border2:rgba(0,0,0,0.14);--accent:#6c5fcc;--accent-light:#5b50b8;--green:#1a9e5c;--green-dim:rgba(26,158,92,0.1);--red:#d63b6e;--red-dim:rgba(214,59,110,0.1);--orange:#d97706;--orange-dim:rgba(217,119,6,0.1);--text:#18182a;--text2:#4a4a6a;--text3:#8888a8;}
+body.light .header{background:rgba(240,242,248,0.95);}
+body.light .bnav{background:rgba(240,242,248,0.97);}
+body.light .toast{background:#fff;color:#18182a;}
+body.light .login-card{box-shadow:0 4px 24px rgba(0,0,0,0.08);}
+body.light select,body.light input{color:var(--text);background:var(--card);}
+body.light .inapp-notif{background:var(--card);}
+body.light .overlay{background:rgba(0,0,0,0.45);}
+body.light .sheet{background:var(--bg2);}
+
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 html{height:100%;}
 body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;font-size:14px;padding-bottom:calc(80px + env(safe-area-inset-bottom,0px));}
@@ -1797,7 +1917,8 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .user-name{font-size:12px;font-weight:600;color:var(--text2);max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
 /* PAGES */
-.page{display:none;padding:16px 16px 100px;}
+#appShell{display:flex;flex-direction:column;min-height:100vh;}
+.page{display:none;padding:16px 16px 100px;overflow-x:hidden;}
 .page.active{display:block;}
 
 /* BOTTOM NAV */
@@ -2072,6 +2193,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
     <div class="logo">Fin<span>Track</span> <span style="font-size:11px;background:var(--accent);color:white;border-radius:6px;padding:1px 6px;vertical-align:middle;font-weight:700;">v1.0</span></div>
     <div class="header-right">
       <div class="sync-dot synced" id="syncDot" title="Tersinkron"></div>
+      <div class="icon-btn" id="themeToggleBtn" onclick="toggleTheme()" title="Ganti Tema">🌙</div>
       <div class="icon-btn" onclick="exportExcel()" title="Export Excel">⬇️</div>
       <div class="icon-btn" onclick="goPage('settings')" title="Pengaturan">⚙️</div>
       <img class="user-avatar" id="userAvatar" src="" alt="Profil" onclick="goPage('profil')" style="cursor:pointer;" title="Profil Saya">
