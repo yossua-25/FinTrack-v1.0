@@ -320,11 +320,11 @@ onAuthStateChanged(auth, async user=>{
 
 function showLogin(){
   document.getElementById('loginScreen').style.display='flex';
-  document.getElementById('appShell').style.display='none';
+  document.getElementById('appShell').classList.remove('visible');
 }
 function showApp(user){
   document.getElementById('loginScreen').style.display='none';
-  document.getElementById('appShell').style.display='block';
+  document.getElementById('appShell').classList.add('visible');
   // Update avatar
   const av=document.getElementById('userAvatar');
   const an=document.getElementById('userName');
@@ -1904,7 +1904,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .login-note{font-size:11px;color:var(--text3);text-align:center;margin-top:14px;line-height:1.5;}
 
 /* APP SHELL */
-#appShell{display:none;}
+/* (visibility controlled via JS showApp/hideApp) */
 
 /* HEADER */
 .header{position:sticky;top:0;z-index:50;padding:calc(12px + var(--safe-t)) 16px 12px;background:rgba(13,13,20,0.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
@@ -1922,7 +1922,8 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .user-name{font-size:12px;font-weight:600;color:var(--text2);max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
 /* PAGES */
-#appShell{position:fixed;inset:0;display:flex;flex-direction:column;overflow:hidden;}
+#appShell{position:fixed;inset:0;display:none;flex-direction:column;overflow:hidden;}
+#appShell.visible{display:flex;}
 .pages-wrap{flex:1;position:relative;overflow:hidden;}
 .page{
   display:none;
